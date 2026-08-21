@@ -67,7 +67,7 @@ All three engines use the same system-level platform.
 ```text
 Platform        : PYNQ-Z2 / Zynq-7020
 Target workload : CIFAR-10 Model 2
-Compute array   : 12 × 12 systolic array
+Compute array   : 9 × 16 systolic array
 PS–PL interface : 32-bit AXI4-Lite
 Block Design    : Fixed across all engines
 AXI protocol    : Fixed across all engines
@@ -100,7 +100,7 @@ The PS is responsible for executing the CNN at the network level, while the PL o
         | Activation Buffer|
         | Weight Buffer    |
         |       ↓          |
-        |   12×12 SA       |
+        |    9 × 16 SA     |
         |       ↓          |
         | Product Buffer   |
         +--------+---------+
@@ -148,7 +148,7 @@ After model data and an input image are provided, the PL autonomously executes t
 |               ↓                  |
 |       Activation Buffer          |
 |               ↓                  |
-|           12×12 SA               |
+|           9 × 16 SA              |
 |               ↓                  |
 |     Activation / Pooling         |
 |               ↓                  |
@@ -259,7 +259,7 @@ Zero Detection
   │           │
   ↓           ↓
 Next       Send to
-Address    12×12 SA
+Address    9×16 SA
 ```
 
 The objective is to exploit activation sparsity to reduce unnecessary computation.
@@ -348,7 +348,7 @@ This allows the performance contribution and hardware cost of each optimization 
 
 # Status
 
-- [ ] 12×12 systolic-array baseline
+- [ ] 9×16 systolic-array baseline
 - [ ] Baseline PS-managed inference
 - [ ] End-to-end PL inference engine
 - [ ] Baseline vs. end-to-end evaluation
