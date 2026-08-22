@@ -1,520 +1,592 @@
-# CIFAR-10 Inference Model
+# Model 2 — CIFAR-10 Inference Model
 
 ## Overview
 
-This project uses **Model 2**, a compact VGG-style convolutional neural network previously developed for CIFAR-10 classification.
+Model 2 is a compact VGG-style convolutional neural network used for CIFAR-10 image classification.
 
-Model 2 was selected as the target inference workload for the FPGA NPU implementation.  
+The model takes a `32 × 32` RGB image as input and produces 10 output logits corresponding to the CIFAR-10 classes.
+
 The network consists of:
 
 - 6 convolution layers
 - ReLU activation after each convolution layer
-- 3 max-pooling operations
+- 3 max-pooling layers
 - Global Average Pooling (GAP)
 - 2 fully connected layers
-- 10-class CIFAR-10 output
 
-All convolution layers use a **3 × 3 kernel with padding = 1**.
-
-The network input is a CIFAR-10 RGB image with a spatial resolution of:
+All convolution layers use:
 
 ```text
-3 × 32 × 32
+Kernel size : 3 × 3
+Stride      : 1
+Padding     : 1
 ```
 
-where the three input channels correspond to R, G, and B.
+Therefore, each convolution preserves the spatial resolution of its input feature map.
+
+Spatial downsampling is performed only by the `2 × 2` max-pooling layers.
 
 ---
 
-## Network Architecture
+## Model Architecture
 
-> **Architecture figure will be added here.**
+<img width="1800" height="1005" alt="image" src="https://github.com/user-attachments/assets/064491b0-99c9-4772-bc3a-e3cf267f8097" />
 
-Suggested structure for the figure:
+
+The network structure is:
 
 ```text
-Input
+Input RGB Image
 3 × 32 × 32
       │
       ▼
-Conv1: 3 → 32, 3×3
+Input Normalization
       │
-     ReLU
+      ▼
+Conv1: 3 → 32, 3×3
+ReLU
+      │
+      ▼
+32 × 32 × 32
       │
       ▼
 Conv2: 32 → 32, 3×3
+ReLU
       │
-     ReLU
+      ▼
+MaxPool 2×2
       │
- MaxPool 2×2
+      ▼
+32 × 16 × 16
       │
       ▼
 Conv3: 32 → 64, 3×3
+ReLU
       │
-     ReLU
+      ▼
+64 × 16 × 16
       │
       ▼
 Conv4: 64 → 64, 3×3
+ReLU
       │
-     ReLU
+      ▼
+MaxPool 2×2
       │
- MaxPool 2×2
+      ▼
+64 × 8 × 8
       │
       ▼
 Conv5: 64 → 96, 3×3
+ReLU
       │
-     ReLU
+      ▼
+96 × 8 × 8
       │
       ▼
 Conv6: 96 → 96, 3×3
+ReLU
       │
-     ReLU
+      ▼
+MaxPool 2×2
       │
- MaxPool 2×2
+      ▼
+96 × 4 × 4
       │
       ▼
 Global Average Pooling
       │
       ▼
-FC1: 96 → 128
+96
       │
-     ReLU
+      ▼
+FC1: 96 → 128
+ReLU
+      │
+      ▼
+128
       │
       ▼
 FC2: 128 → 10
       │
       ▼
-CIFAR-10 logits
+10-Class Logits
 ```
 
 ---
 
-## Layer Dimensions
+## Layer Specification
 
-| Layer | Input Shape | Kernel | Output Shape |
+| Layer | Input | Operation | Output |
 |---|---|---|---|
-| Conv1 | 3 × 32 × 32 | 3 × 3, 3 → 32 | 32 × 32 × 32 |
-| Conv2 | 32 × 32 × 32 | 3 × 3, 32 → 32 | 32 × 32 × 32 |
-| MaxPool1 | 32 × 32 × 32 | 2 × 2 | 32 × 16 × 16 |
-| Conv3 | 32 × 16 × 16 | 3 × 3, 32 → 64 | 64 × 16 × 16 |
-| Conv4 | 64 × 16 × 16 | 3 × 3, 64 → 64 | 64 × 16 × 16 |
-| MaxPool2 | 64 × 16 × 16 | 2 × 2 | 64 × 8 × 8 |
-| Conv5 | 64 × 8 × 8 | 3 × 3, 64 → 96 | 96 × 8 × 8 |
-| Conv6 | 96 × 8 × 8 | 3 × 3, 96 → 96 | 96 × 8 × 8 |
-| MaxPool3 | 96 × 8 × 8 | 2 × 2 | 96 × 4 × 4 |
-| GAP | 96 × 4 × 4 | — | 96 |
-| FC1 | 96 | — | 128 |
-| FC2 | 128 | — | 10 |
+| Input | RGB image | Normalization | `3 × 32 × 32` |
+| Conv1 | `3 × 32 × 32` | 3×3 Conv, 3→32, ReLU | `32 × 32 × 32` |
+| Conv2 | `32 × 32 × 32` | 3×3 Conv, 32→32, ReLU | `32 × 32 × 32` |
+| MaxPool1 | `32 × 32 × 32` | 2×2, stride 2 | `32 × 16 × 16` |
+| Conv3 | `32 × 16 × 16` | 3×3 Conv, 32→64, ReLU | `64 × 16 × 16` |
+| Conv4 | `64 × 16 × 16` | 3×3 Conv, 64→64, ReLU | `64 × 16 × 16` |
+| MaxPool2 | `64 × 16 × 16` | 2×2, stride 2 | `64 × 8 × 8` |
+| Conv5 | `64 × 8 × 8` | 3×3 Conv, 64→96, ReLU | `96 × 8 × 8` |
+| Conv6 | `96 × 8 × 8` | 3×3 Conv, 96→96, ReLU | `96 × 8 × 8` |
+| MaxPool3 | `96 × 8 × 8` | 2×2, stride 2 | `96 × 4 × 4` |
+| GAP | `96 × 4 × 4` | Global Average Pooling | `96` |
+| FC1 | `96` | Fully Connected, ReLU | `128` |
+| FC2 | `128` | Fully Connected | `10` |
 
 ---
 
-## Convolution-to-Matrix-Multiplication Mapping
+# Numerical Operations
 
-The NPU implements convolution using matrix multiplication.
+## 1. Input Preprocessing
 
-For a convolution layer,
-
-```text
-Cin  = number of input channels
-Cout = number of output channels
-KH   = kernel height
-KW   = kernel width
-```
-
-The GEMM inner dimension is:
+The original CIFAR-10 input consists of unsigned 8-bit RGB pixels:
 
 ```text
-K = Cin × KH × KW
+R, G, B ∈ [0, 255]
 ```
 
-Since every convolution in Model 2 uses a 3 × 3 kernel,
+The input is first converted to floating point and scaled to `[0, 1]`:
 
 ```text
-K = 9 × Cin
+x = pixel / 255
 ```
 
-If the output feature map contains `S = Hout × Wout` spatial positions, the convolution can be represented as:
+Channel-wise normalization is then applied:
 
 ```text
-Activation Matrix : S × K
-Weight Matrix     : K × Cout
-
-                 ↓
-
-Output Matrix     : S × Cout
+x_norm = (x - mean) / std
 ```
 
-The output matrix is subsequently reconstructed into a feature map with shape:
+using:
 
 ```text
-Cout × Hout × Wout
+mean = (0.4914, 0.4822, 0.4465)
+std  = (0.2470, 0.2435, 0.2616)
 ```
+
+Therefore, the raw `0–255` RGB values are not directly used as Conv1 operands.
+
+Before Conv1, the normalized activation is quantized to signed INT8.
 
 ---
 
-## Convolution GEMM Dimensions
+## 2. Convolution
 
-### Conv1
+For an output channel `o` at spatial position `(h, w)`, a convolution computes:
 
 ```text
-Cin  = 3
-Cout = 32
-S    = 32 × 32 = 1024
-K    = 3 × 3 × 3 = 27
+y[o,h,w]
+    =
+    Σ x[c,h+i,w+j] × W[o,c,i,j]
+    + b[o]
 ```
 
-Therefore:
+where the summation is performed over:
 
 ```text
-Activation : 1024 × 27
-Weight     :   27 × 32
-Output     : 1024 × 32
+c = input channels
+i = 0, 1, 2
+j = 0, 1, 2
 ```
 
-The output is reconstructed as:
+because all convolution kernels are `3 × 3`.
+
+The number of multiply-accumulate terms for one output element is therefore:
 
 ```text
-32 × 32 × 32
+K = Cin × 3 × 3
+  = 9 × Cin
 ```
 
----
-
-### Conv2
+For example:
 
 ```text
-Cin  = 32
-Cout = 32
-S    = 32 × 32 = 1024
-K    = 32 × 9 = 288
-```
-
-```text
-Activation : 1024 × 288
-Weight     :  288 × 32
-Output     : 1024 × 32
-```
-
-After Conv2, a 2 × 2 max-pooling operation reduces the spatial resolution:
-
-```text
-32 × 32 → 16 × 16
+Conv1: K = 3  × 9 = 27
+Conv2: K = 32 × 9 = 288
+Conv4: K = 64 × 9 = 576
+Conv6: K = 96 × 9 = 864
 ```
 
 ---
 
-### Conv3
+## 3. INT8 Convolution
+
+The reference inference model uses quantized activations and quantized weights for the convolution operation.
+
+For an activation tensor `x`, an activation scale `s_x` is first determined and the activation is quantized:
 
 ```text
-Cin  = 32
-Cout = 64
-S    = 16 × 16 = 256
-K    = 32 × 9 = 288
+x_q = floor(x / s_x)
 ```
 
+followed by clipping to the signed INT8 range:
+
 ```text
-Activation : 256 × 288
-Weight     : 288 × 64
-Output     : 256 × 64
+x_q ∈ [-128, 127]
 ```
 
----
+Each convolution layer also has an INT8 weight tensor `w_q` and a corresponding weight scale `s_w`.
 
-### Conv4
+The integer convolution computes:
 
 ```text
-Cin  = 64
-Cout = 64
-S    = 16 × 16 = 256
-K    = 64 × 9 = 576
+p = Σ x_q × w_q
 ```
 
+where `p` is a wide integer accumulation result.
+
+The corresponding floating-point convolution result is reconstructed as:
+
 ```text
-Activation : 256 × 576
-Weight     : 576 × 64
-Output     : 256 × 64
+y = p × s_x × s_w + bias
 ```
 
-After Conv4:
+Thus, the integer MAC result and its numerical interpretation are related by:
 
 ```text
-16 × 16 → 8 × 8
-```
+Integer MAC
+    p = Σ x_q × w_q
 
----
-
-### Conv5
-
-```text
-Cin  = 64
-Cout = 96
-S    = 8 × 8 = 64
-K    = 64 × 9 = 576
-```
-
-```text
-Activation : 64 × 576
-Weight     : 576 × 96
-Output     : 64 × 96
+Real-domain result
+    y = p × (s_x × s_w) + b
 ```
 
 ---
 
-### Conv6
+## 4. ReLU
 
-```text
-Cin  = 96
-Cout = 96
-S    = 8 × 8 = 64
-K    = 96 × 9 = 864
-```
+ReLU is applied after every convolution layer and after FC1.
 
-```text
-Activation : 64 × 864
-Weight     : 864 × 96
-Output     : 64 × 96
-```
-
-Conv6 has the largest GEMM inner dimension among the convolution layers.
-
-After Conv6:
-
-```text
-96 × 8 × 8
-      ↓
-MaxPool
-      ↓
-96 × 4 × 4
-```
-
----
-
-## Fully Connected Layers
-
-Global Average Pooling reduces each 4 × 4 channel into a single value:
-
-```text
-96 × 4 × 4
-      ↓ GAP
-1 × 96
-```
-
-### FC1
-
-```text
-Activation :   1 × 96
-Weight     :  96 × 128
-Output     :   1 × 128
-```
-
-A ReLU operation is applied after FC1.
-
-### FC2
-
-```text
-Activation :   1 × 128
-Weight     : 128 × 10
-Output     :   1 × 10
-```
-
-The 10 output values correspond to the CIFAR-10 class logits.
-
----
-
-## GEMM Summary
-
-| Layer | Activation Matrix | Weight Matrix | Output Matrix |
-|---|---:|---:|---:|
-| Conv1 | 1024 × 27 | 27 × 32 | 1024 × 32 |
-| Conv2 | 1024 × 288 | 288 × 32 | 1024 × 32 |
-| Conv3 | 256 × 288 | 288 × 64 | 256 × 64 |
-| Conv4 | 256 × 576 | 576 × 64 | 256 × 64 |
-| Conv5 | 64 × 576 | 576 × 96 | 64 × 96 |
-| Conv6 | 64 × 864 | 864 × 96 | 64 × 96 |
-| FC1 | 1 × 96 | 96 × 128 | 1 × 128 |
-| FC2 | 1 × 128 | 128 × 10 | 1 × 10 |
-
----
-
-## Mapping to the 9 × 16 Systolic Array
-
-The hardware uses a **9 × 16 systolic array**.
-
-The dimensions were selected to match the structure of the target convolution workload.
-
-### 9 PE Rows
-
-All convolution layers use 3 × 3 kernels.
-
-Therefore:
-
-```text
-3 × 3 = 9 kernel elements
-```
-
-The 9-row dimension can process the nine kernel elements associated with one input channel.
-
-Since:
-
-```text
-K = 9 × Cin
-```
-
-the K dimension can be processed one input channel at a time.
-
-For example, Conv6 has:
-
-```text
-Cin = 96
-K   = 864 = 9 × 96
-```
-
-and therefore requires 96 input-channel accumulation steps.
-
-### 16 PE Columns
-
-The 16-column dimension processes 16 output channels in parallel.
-
-The convolutional output-channel dimensions of Model 2 are:
-
-```text
-32
-32
-64
-64
-96
-96
-```
-
-All of them are exact multiples of 16.
-
-Therefore:
-
-| Layer | Cout | 16-Channel Tiles |
-|---|---:|---:|
-| Conv1 | 32 | 2 |
-| Conv2 | 32 | 2 |
-| Conv3 | 64 | 4 |
-| Conv4 | 64 | 4 |
-| Conv5 | 96 | 6 |
-| Conv6 | 96 | 6 |
-
-This avoids partially occupied output-channel tiles in all six convolution layers.
-
-The fully connected layers do not share the same 3 × 3 convolution structure and therefore require partial-row or partial-column handling for their final tiles.
-
----
-
-## Accumulator Width
-
-The largest accumulation depth occurs in Conv6:
-
-```text
-K = 96 × 3 × 3
-  = 864
-```
-
-For signed INT8 operands, the largest positive product is:
-
-```text
-(-128) × (-128) = 16384
-```
-
-The worst-case positive accumulation is therefore:
-
-```text
-16384 × 864
-= 14,155,776
-```
-
-A signed 25-bit accumulator provides the range:
-
-```text
--16,777,216 ~ 16,777,215
-```
-
-and is therefore sufficient for the convolution MAC accumulation of Model 2.
-
-The effect of bias addition and subsequent numerical processing is handled separately from this MAC-width analysis.
-
----
-
-## ReLU
-
-ReLU is applied after each convolution layer and after FC1.
+The operation is:
 
 ```text
 ReLU(x) = max(0, x)
 ```
 
-In hardware, ReLU can be implemented using the sign bit of the signed result:
+Therefore:
 
 ```text
-Negative result → 0
-Positive result → pass through
+x < 0  →  0
+x ≥ 0  →  x
 ```
 
-This requires very little additional logic compared with the matrix-multiplication datapath.
+ReLU removes negative activations and introduces non-linearity into the network.
 
 ---
 
-## Input Preprocessing
+## 5. Max Pooling
 
-The original CIFAR-10 input consists of unsigned 8-bit RGB pixels:
-
-```text
-R, G, B = 0 ~ 255
-```
-
-The existing Model 2 inference flow performs input normalization before executing the CNN.
-
-For Project 2, input preprocessing is performed by the **Processing System (PS)** before the input activation data is transferred to the NPU.
-
-The intended system boundary is therefore:
+Each max-pooling layer uses:
 
 ```text
-Raw CIFAR-10 Image
-        │
-        ▼
-PS Input Preprocessing
-        │
-        ▼
-NPU Input Activation
-        │
-        ▼
-PL CNN Inference
-        │
-        ▼
-10-Class Output
+Kernel size : 2 × 2
+Stride      : 2
 ```
 
-Keeping input preprocessing on the PS avoids adding preprocessing-specific hardware to the PL and allows the NPU optimization study to focus on CNN inference execution.
+For each channel, the maximum value in every `2 × 2` region is selected:
 
-The same preprocessing procedure will be used for all compared NPU engines.
+```text
+y[c,h,w]
+    =
+    max(
+        x[c,2h,  2w],
+        x[c,2h+1,2w],
+        x[c,2h,  2w+1],
+        x[c,2h+1,2w+1]
+    )
+```
+
+Max pooling reduces the spatial dimensions by a factor of two:
+
+```text
+32 × 32 → 16 × 16
+16 × 16 →  8 × 8
+ 8 ×  8 →  4 × 4
+```
+
+while preserving the number of channels.
 
 ---
 
-## Role in Project 2
+## 6. Global Average Pooling
 
-Model 2 is kept fixed throughout the architectural comparison.
-
-The target model, trained parameters, input dataset, and basic arithmetic configuration are treated as controlled conditions.
-
-The project instead evaluates the effect of changing the NPU execution architecture:
+After Conv6 and the final max-pooling layer, the feature-map shape is:
 
 ```text
-Engine 1
-PS-Managed Inference
-
-        ↓
-
-Engine 2
-End-to-End PL Inference
-
-        ↓
-
-Engine 3
-End-to-End PL Inference
-+ Column-Level Zero-Skipping
+96 × 4 × 4
 ```
 
-Using the same inference model across all three engines allows changes in execution cycles, latency, resource utilization, and power consumption to be attributed to the hardware architecture rather than to differences in the neural network workload.
+Global Average Pooling computes one value for each channel by averaging all 16 spatial values:
+
+```text
+GAP[c]
+    =
+    (1 / 16)
+    × Σ x[c,h,w]
+```
+
+where:
+
+```text
+h = 0 ... 3
+w = 0 ... 3
+```
+
+The resulting tensor is therefore reduced from:
+
+```text
+96 × 4 × 4
+```
+
+to:
+
+```text
+96
+```
+
+and is used as the input to FC1.
+
+---
+
+## 7. Fully Connected Layers
+
+FC1 performs:
+
+```text
+y = Wx + b
+```
+
+with:
+
+```text
+Input  : 96
+Output : 128
+```
+
+followed by ReLU.
+
+FC2 performs:
+
+```text
+Input  : 128
+Output : 10
+```
+
+and produces the final CIFAR-10 logits.
+
+The predicted class is:
+
+```text
+prediction = argmax(logit)
+```
+
+---
+
+# Activation Requantization
+
+## Why Requantization Is Required
+
+The output of a quantized convolution is not directly an INT8 activation.
+
+The convolution performs:
+
+```text
+INT8 activation
+      ×
+INT8 weight
+      ↓
+Wide integer accumulation
+```
+
+and therefore produces a value with a much larger numerical range than `[-128, 127]`.
+
+Before that activation is used by the next convolution or fully connected layer, it must be converted back into an INT8 representation.
+
+This operation is referred to as **requantization**.
+
+Requantization is different from the initial RGB preprocessing:
+
+```text
+Initial preprocessing:
+raw RGB → normalized model input
+
+Requantization:
+intermediate layer output → INT8 input for next weighted layer
+```
+
+---
+
+## Reference Requantization Method
+
+In the current inference reference, the quantization scale of an activation tensor is determined from its maximum absolute value.
+
+For an activation tensor `x`:
+
+```text
+max_abs = max(|x|)
+```
+
+and the INT8 scale is:
+
+```text
+s_x = 2 × max_abs / 255
+```
+
+The activation is then quantized as:
+
+```text
+x_q = floor(x / s_x)
+```
+
+and clipped to:
+
+```text
+[-128, 127]
+```
+
+After ReLU, all values are non-negative, so the effective quantized range becomes:
+
+```text
+[0, 127]
+```
+
+For example, if the maximum ReLU activation is `Amax`, the scale becomes:
+
+```text
+scale = 2 × Amax / 255
+```
+
+and the largest activation is mapped approximately to:
+
+```text
+Amax / scale
+≈ 127.5
+```
+
+which is clipped to:
+
+```text
+127
+```
+
+This allows the available INT8 range to be adapted to the activation range of each intermediate tensor.
+
+---
+
+## Position of Requantization
+
+Requantization occurs before an activation is consumed by the next weighted layer.
+
+The effective sequence of the model is:
+
+```text
+Input
+ ↓
+Normalize
+ ↓
+Quantize
+ ↓
+Conv1
+ ↓
+ReLU
+ ↓
+Requantize
+ ↓
+Conv2
+```
+
+For a block containing max pooling:
+
+```text
+Conv2
+ ↓
+ReLU
+ ↓
+MaxPool
+ ↓
+Requantize
+ ↓
+Conv3
+```
+
+Likewise:
+
+```text
+Conv4
+ ↓
+ReLU
+ ↓
+MaxPool
+ ↓
+Requantize
+ ↓
+Conv5
+```
+
+The final convolution block is:
+
+```text
+Conv6
+ ↓
+ReLU
+ ↓
+MaxPool
+ ↓
+GAP
+ ↓
+Requantize
+ ↓
+FC1
+```
+
+and the final hidden fully connected layer is:
+
+```text
+FC1
+ ↓
+ReLU
+ ↓
+Requantize
+ ↓
+FC2
+```
+
+FC2 is the final weighted layer and therefore does not require another activation requantization.
+
+---
+
+## Summary of Numerical Flow
+
+The inference model can be summarized as:
+
+```text
+Raw RGB Image
+      ↓
+Normalize
+      ↓
+INT8 Quantization
+      ↓
+
+┌─────────────────────────────┐
+│ INT8 Weighted Layer         │
+│ Conv or FC                  │
+│                             │
+│ INT8 × INT8                 │
+│      ↓                      │
+│ Wide Accumulation           │
+│      ↓                      │
+│ Scale Restoration + Bias    │
+│      ↓                      │
+│ ReLU / Pool / GAP           │
+│      ↓                      │
+│ Requantization to INT8      │
+└─────────────────────────────┘
+      ↓
+Next Weighted Layer
+      ↓
+...
+      ↓
+10 Output Logits
+```
+
+The model therefore maintains low-precision operands for its weighted operations while using a wider numerical representation for intermediate accumulation.
