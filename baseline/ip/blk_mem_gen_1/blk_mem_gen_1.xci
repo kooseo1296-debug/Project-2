@@ -4,7 +4,7 @@
     "xci_name": "blk_mem_gen_1",
     "component_reference": "xilinx.com:ip:blk_mem_gen:8.4",
     "ip_revision": "12",
-    "gen_directory": "../../../../project_2_baseline.gen/sources_1/ip/blk_mem_gen_1",
+    "gen_directory": "../../../../project_2_baselines.gen/sources_1/ip/blk_mem_gen_1",
     "parameters": {
       "component_parameters": {
         "Component_Name": [ { "value": "blk_mem_gen_1", "resolve_type": "user", "usage": "all" } ],
@@ -174,7 +174,7 @@
         "IPCONTEXT": [ { "value": "IP_Flow" } ],
         "IPREVISION": [ { "value": "12" } ],
         "MANAGED": [ { "value": "TRUE" } ],
-        "OUTPUTDIR": [ { "value": "../../../../project_2_baseline.gen/sources_1/ip/blk_mem_gen_1" } ],
+        "OUTPUTDIR": [ { "value": "../../../../project_2_baselines.gen/sources_1/ip/blk_mem_gen_1" } ],
         "SELECTEDSIMMODEL": [ { "value": "" } ],
         "SHAREDDIR": [ { "value": "." } ],
         "SWVERSION": [ { "value": "2025.2.1" } ],
@@ -256,5 +256,5 @@
       }
     }
   },
-  "checksum": "c0a6de40"
+  "checksum": "37af97f9"
 }
