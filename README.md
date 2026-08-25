@@ -343,17 +343,3 @@ Effect of exploiting activation sparsity
 ```
 
 This allows the performance contribution and hardware cost of each optimization to be evaluated separately.
-
----
-
-# Status
-
-- [ ] 9×16 systolic-array baseline
-- [ ] Baseline PS-managed inference
-- [ ] End-to-end PL inference engine
-- [ ] Baseline vs. end-to-end evaluation
-- [ ] Layer-wise activation sparsity profiling
-- [ ] Column-level zero detector
-- [ ] Column-level zero-skipping controller
-- [ ] End-to-end vs. zero-skip evaluation
-- [ ] Power analysis
