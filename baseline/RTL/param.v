@@ -6,9 +6,9 @@
 
 // data
 `define BIT_DATA    8
-`define BIT_PSUM    24
+`define BIT_PSUM    25
 
 // SRAM Address widths
-`define ADDR_ASRAM 10
-`define ADDR_WSRAM  9
-`define ADDR_PSRAM 10
+`define ADDR_ASRAM 12
+`define ADDR_WSRAM 14
+`define ADDR_PSRAM 12

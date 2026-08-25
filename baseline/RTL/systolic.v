@@ -1,13 +1,13 @@
 `include "param.v"
 
-module systolic ( CLK, RST, i_Data_I_In, i_Data_W_In, i_EN_W_In, i_EN_ID_In, /*i_Psum_In,*/ o_Psum_Out,
+module systolic ( CLK, RST, i_Data_I_In, i_Data_W_In, i_EN_W_In, i_EN_ID_In, i_Psum_In, o_Psum_Out,
                   i_Addr_P_In, i_Valid_P_In, o_Addr_P_Out, o_Valid_P_Out);
 input CLK, RST;
 input [`PE_ROW*`BIT_DATA-1:0] i_Data_I_In;
 input [`PE_COL*`BIT_DATA-1:0] i_Data_W_In;
 input [`PE_COL-1:0] i_EN_W_In;
 input [`BIT_ROW_ID-1:0] i_EN_ID_In;
-/*input wire [`PE_COL*`BIT_PSUM-1:0]*/ localparam i_Psum_In = {(`PE_COL*`BIT_PSUM){1'b0}};
+input [`PE_COL*`BIT_PSUM-1:0] i_Psum_In;
 output [`PE_COL*`BIT_PSUM-1:0] o_Psum_Out;
 
 input  [`PE_COL*`ADDR_PSRAM-1:0] i_Addr_P_In;
