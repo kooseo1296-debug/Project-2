@@ -1,4 +1,3 @@
-````markdown
 # AXI4-Lite Command Interface
 
 The accelerator is controlled through a 32-bit AXI4-Lite interface between the Processing System (PS) and Programmable Logic (PL).
@@ -495,24 +494,3 @@ Read final result from 0x00
 ```
 
 ---
-
-# 5. Baseline vs. V2
-
-| Feature | Baseline | V2 |
-|---|---|---|
-| Weight loading | PS controlled | PS controlled |
-| Input loading | PS controlled | PS controlled |
-| MatMul configuration | PS controlled | PL controlled |
-| MatMul execution | Explicit PS command | Internal PL scheduling |
-| Product Buffer readback | PS controlled | Not required during normal inference |
-| CNN scheduling | PS | PL |
-| Final result | PB data | Class + Value |
-| PS intervention | High | Reduced |
-| Main PL role | MatMul accelerator | End-to-end CNN accelerator |
-
-The main architectural difference is the **execution partition between the PS and PL**.
-
-The Baseline exposes individual MatMul operations and intermediate Product Buffer data to software.
-
-V2 is intended to hide intermediate CNN execution from the PS and expose only input/weight transfer, execution start, and final inference result.
-````
