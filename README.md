@@ -60,6 +60,25 @@ This project investigates whether moving the complete inference process into the
 
 ---
 
+## Architecture
+
+The accelerator is implemented on the PL of the PYNQ-Z2
+and controlled by the ARM Cortex-A9 through AXI4-Lite.
+
+<img width="2167" height="1345" alt="image" src="https://github.com/user-attachments/assets/d07c178a-a154-41b9-8dd4-33fca6cecf90" />
+
+### Current Baseline
+- 9×16 weight-stationary systolic array
+- 144 processing elements
+- Activation / Weight / Product buffers
+- AXI4-Lite PS–PL interface
+- Vitis-based bare-metal host control
+
+For implementation details and dataflow, see
+[Architecture Documentation](docs/architecture.md).
+
+---
+
 ## Experimental Platform
 
 All three engines use the same system-level platform.
