@@ -1,747 +1,514 @@
-# Tiling and Buffer Mapping
+# Matrix Tiling and Memory Layout Example
 
-This document describes how matrix operations are mapped onto the
-9 × 16 weight-stationary systolic array and how activation and weight
-data are organized in the on-chip buffers.
+This document explains how matrix tiling, buffer mapping, tiled matrix multiplication, and partial-product accumulation are performed for a **9 × 16 systolic array**.
 
-The same mapping is used as the basic execution mechanism for
-convolution layers after the convolution is transformed into a matrix
-multiplication.
+The following matrix multiplication is used as an example:
 
----
+<img width="2570" height="888" alt="image" src="https://github.com/user-attachments/assets/5be0319a-7b9c-488b-8f06-7371cd2a9e60" />
 
-## 1. Matrix Multiplication Model
-
-The accelerator computes matrix multiplication in the following form:
-
-```text
-A [S × K] × W [K × OC] = C [S × OC]
+```
+A : 40 × 20
+W : 20 × 37
+P : 40 × 37
 ```
 
 where:
 
-- `S` is the number of activation vectors to process.
-- `K` is the reduction dimension.
-- `OC` is the number of output channels.
 - `A` is the activation matrix.
 - `W` is the weight matrix.
-- `C` is the output matrix.
-
-For a convolution layer, the dimensions can be interpreted as:
-
-```text
-S  = number of output spatial positions
-K  = Cin × Kh × Kw
-OC = number of output channels
-```
-
-The physical systolic array contains:
-
-```text
-9 × 16 Processing Elements
-```
-
-Therefore, the hardware parallelism is:
-
-```text
-K_TILE  = 9
-OC_TILE = 16
-```
-
-A single systolic-array configuration operates on up to 9 elements
-along the reduction dimension and 16 output channels in parallel.
-
-Larger matrix operations are decomposed into multiple tiles.
+- `P` is the final product matrix.
+- The systolic array contains **9 rows × 16 columns**.
 
 ---
 
-# 2. Activation Buffer Mapping
+## 1. Activation Matrix
 
-![Activation Buffer Mapping](images/activation_buffer_mapping.png)
+The original activation matrix has size:
 
-The Activation Buffer is organized as **9 independent banks**.
+\[
+A \in \mathbb{Z}^{40 \times 20}
+\]
 
-The 9 banks correspond to the 9 elements of the `K` dimension that
-can be supplied to the systolic array in parallel.
+![Original activation matrix](./images/activation_matrix_original.png)
 
-Consider an activation matrix:
+The systolic array can process **9 values along the K dimension at once**. Therefore, the 20 activation columns are divided into groups of 9.
 
-```text
-            K dimension
-        ──────────────────►
+The activation matrix is divided into:
 
-        A11 A12 A13 A14 ...
-        A21 A22 A23 A24 ...
-A =     A31 A32 A33 A34 ...
-         :   :   :   :
-```
+- Tile `1`: `40 × 9`
+- Tile `2`: `40 × 9`
+- Tile `3`: `40 × 2`
 
-The activation matrix is mapped across the banks as:
+Since the third tile contains only two valid columns, the remaining seven columns are zero-padded. Therefore, the tiled activation matrix has an effective size of:
 
-```text
-Bank 0 : A11  A21  A31  ...
-Bank 1 : A12  A22  A32  ...
-Bank 2 : A13  A23  A33  ...
-  :
-Bank 8 : A19  A29  A39  ...
-```
+\[
+40 \times 27
+\]
 
-Equivalently:
+![Tiled activation matrix](./images/activation_matrix_tiled.png)
+
+The three activation tiles correspond to:
 
 ```text
-Activation Buffer
-
-            Address →
-         0     1     2    ...
-
-Bank 0  A11   A21   A31   ...
-Bank 1  A12   A22   A32   ...
-Bank 2  A13   A23   A33   ...
-  :
-Bank 8  A19   A29   A39   ...
+Tile 1 : original columns  0 ~  8
+Tile 2 : original columns  9 ~ 17
+Tile 3 : original columns 18 ~ 19 + 7 zero-padded columns
 ```
 
-Thus, reading the same address from all 9 banks produces one
-9-element activation vector:
-
-```text
-Address 0:
-
-[A11, A12, A13, ... , A19]
-```
-
-and the next address produces:
-
-```text
-Address 1:
-
-[A21, A22, A23, ... , A29]
-```
-
-This organization matches the 9-element input width of the systolic
-array and avoids serially reading the individual elements required for
-one activation vector.
-
-In other words, the buffer layout is determined by the physical
-parallelism of the systolic array rather than by simply storing the
-matrix in a conventional linear row-major representation.
+The zero-padding allows every activation tile to have a fixed width of 9, matching the number of rows in the systolic array.
 
 ---
 
-# 3. Weight Buffer Mapping
+## 2. Activation Buffer Mapping
 
-![Weight Buffer Mapping](images/weight_buffer_mapping.png)
+The Activation Buffer is organized into **9 banks**, corresponding to the 9 rows of the systolic array.
 
-The Weight Buffer is organized as **16 banks**.
+![Activation buffer mapping](./images/activation_buffer_mapping.png)
 
-Each bank corresponds to one column of the 9 × 16 systolic array and
-therefore to one output channel within the current `OC` tile.
+Each activation tile contains 40 rows. Therefore, each tile occupies 40 addresses across the 9 banks.
 
-For a weight matrix:
+The address mapping is:
 
 ```text
-             OC dimension
-        ───────────────────►
-
-        W11 W12 W13 ...
-W =     W21 W22 W23 ...
-         :   :   :
+Address   0 ~  39 : Activation Tile 1
+Address  40 ~  79 : Activation Tile 2
+Address  80 ~ 119 : Activation Tile 3
 ```
 
-the buffer mapping is:
+At a given address, all 9 banks are read in parallel.
 
 ```text
-Bank 0        Bank 1        Bank 2
-  W11           W12           W13
-  W21           W22           W23
-   :             :             :
-  W91           W92           W93
+AB[address]
+
+Bank 0 : A[s][k+0]
+Bank 1 : A[s][k+1]
+Bank 2 : A[s][k+2]
+...
+Bank 8 : A[s][k+8]
+```
+
+Thus, one Activation Buffer read provides one complete 9-element activation vector to the systolic array. For Activation Tile 3, the banks corresponding to the padded K positions contain zero.
+
+---
+
+## 3. Weight Matrix
+
+The original weight matrix has size:
+
+\[
+W \in \mathbb{Z}^{20 \times 37}
+\]
+
+![Original weight matrix](./images/weight_matrix_original.png)
+
+The systolic array processes 9 values along the K dimension and 16 output columns at once. Therefore, the weight matrix is divided into **9 × 16 tiles**.
+
+![Tiled weight matrix](./images/weight_matrix_tiled.png)
+
+The resulting weight tiles are:
+
+| Tile | Valid K rows | Valid output columns | Valid size |
+|---|---:|---:|---:|
+| `W11` | 9 | 16 | `9 × 16` |
+| `W12` | 9 | 16 | `9 × 16` |
+| `W13` | 9 | 5 | `9 × 5` |
+| `W21` | 9 | 16 | `9 × 16` |
+| `W22` | 9 | 16 | `9 × 16` |
+| `W23` | 9 | 5 | `9 × 5` |
+| `W31` | 2 | 16 | `2 × 16` |
+| `W32` | 2 | 16 | `2 × 16` |
+| `W33` | 2 | 5 | `2 × 5` |
+
+### 3.1 Partial output-column tile
+
+Tiles `W13`, `W23`, and `W33` contain only five valid output columns.
+
+The physical systolic array still contains 16 columns, but only the valid columns are enabled. For example, for a tile with five valid columns:
+
+```text
+Valid_P = 0000_0000_0001_1111
+```
+
+Only systolic-array columns `[4:0]` are treated as valid. The remaining columns are ignored.
+
+### 3.2 Partial K tile
+
+Tiles `W31`, `W32`, and `W33` contain only two valid K rows.
+
+No special arithmetic handling is required because the corresponding activation tile has already been zero-padded from width 2 to width 9. For the padded K positions:
+
+\[
+A_{\text{padding}} = 0
+\]
+
+and therefore:
+
+\[
+A_{\text{padding}} \times W = 0
+\]
+
+regardless of the undefined or unused weight values in those rows.
+
+Thus, the same 9-row systolic-array datapath can process the final K tile without modifying the MAC structure.
+
+---
+
+## 4. Weight Buffer Mapping
+
+The Weight Buffer is organized into **16 banks**, corresponding to the 16 columns of the systolic array.
+
+![Weight buffer mapping](./images/weight_buffer_mapping.png)
+
+A full `9 × 16` weight tile occupies:
+
+```text
+9 addresses × 16 banks
+```
+
+The tiles are mapped in the following order:
+
+```text
+W11
+W21
+W31
+
+W12
+W22
+W32
+
+W13
+W23
+W33
+```
+
+This matches the mapping shown in the Weight Buffer figure.
+
+For the final output-column group (`W13`, `W23`, `W33`), only the first five banks contain valid output-column weights.
+
+For the final K group (`W31`, `W32`, `W33`), only the first two K rows are valid. The remaining K positions are harmless because the corresponding activation values are zero.
+
+---
+
+## 5. Tiled Matrix Multiplication Order
+
+The full matrix multiplication is decomposed into nine tiled matrix multiplications.
+
+The execution order is:
+
+```text
+#1 : Activation Tile 1 × W11
+#2 : Activation Tile 1 × W12
+#3 : Activation Tile 1 × W13
+
+#4 : Activation Tile 2 × W21
+#5 : Activation Tile 2 × W22
+#6 : Activation Tile 2 × W23
+
+#7 : Activation Tile 3 × W31
+#8 : Activation Tile 3 × W32
+#9 : Activation Tile 3 × W33
+```
+
+### Steps #1 ~ #3
+
+![Tiled matrix multiplication #1 to #3](./images/matmul_steps_1_3.png)
+
+Activation Tile 1 is reused while the weight tile moves across the three output-column groups:
+
+```text
+#1 : A1 × W11
+#2 : A1 × W12
+#3 : A1 × W13
+```
+
+For `#3`, only five systolic-array columns are valid. The bold blue outline in the figure represents the full physical size of the systolic array.
+
+### Steps #4 ~ #6
+
+![Tiled matrix multiplication #4 to #6](./images/matmul_steps_4_6.png)
+
+Activation Tile 2 is then processed:
+
+```text
+#4 : A2 × W21
+#5 : A2 × W22
+#6 : A2 × W23
+```
+
+These products contribute to the same final output-column groups as `#1`, `#2`, and `#3`, respectively.
+
+### Steps #7 ~ #9
+
+![Tiled matrix multiplication #7 to #9](./images/matmul_steps_7_9.png)
+
+Finally, the zero-padded Activation Tile 3 is processed:
+
+```text
+#7 : A3 × W31
+#8 : A3 × W32
+#9 : A3 × W33
+```
+
+The valid region of the weight tile can now be smaller in both dimensions. For example, `W31` has only 2 valid K rows, while `W33` has only 2 valid K rows and 5 valid output columns.
+
+The bold blue rectangle still represents the full physical `9 × 16` systolic array.
+
+The two boundary mechanisms guarantee correct operation:
+
+1. invalid K positions contribute zero because the activation values are zero-padded;
+2. invalid output columns are disabled by the valid mask.
+
+---
+
+## 6. Partial Product Accumulation
+
+Each output-column tile is produced by accumulating the partial products generated by the three K tiles.
+
+### 6.1 Product Tile 1
+
+The first output tile is obtained from:
+
+\[
+P_1 = \#1 + \#4 + \#7
+\]
+
+![Product Tile 1 accumulation](./images/product_tile_1_accumulation.png)
+
+Therefore:
+
+\[
+P_1 = A_1W_{11} + A_2W_{21} + A_3W_{31}
+\]
+
+and:
+
+\[
+P_1 \in \mathbb{Z}^{40 \times 16}
+\]
+
+### 6.2 Product Tile 2
+
+The second output tile is obtained from:
+
+\[
+P_2 = \#2 + \#5 + \#8
+\]
+
+![Product Tile 2 accumulation](./images/product_tile_2_accumulation.png)
+
+Therefore:
+
+\[
+P_2 = A_1W_{12} + A_2W_{22} + A_3W_{32}
+\]
+
+and:
+
+\[
+P_2 \in \mathbb{Z}^{40 \times 16}
+\]
+
+### 6.3 Product Tile 3
+
+The final output tile is obtained from:
+
+\[
+P_3 = \#3 + \#6 + \#9
+\]
+
+![Product Tile 3 accumulation](./images/product_tile_3_accumulation.png)
+
+Only five output columns are valid in this tile.
+
+Therefore:
+
+\[
+P_3 = A_1W_{13} + A_2W_{23} + A_3W_{33}
+\]
+
+and:
+
+\[
+P_3 \in \mathbb{Z}^{40 \times 5}
+\]
+
+---
+
+## 7. Final Product Matrix
+
+The three accumulated product tiles are concatenated along the output-column dimension:
+
+\[
+P = [P_1 \; P_2 \; P_3]
+\]
+
+![Final product matrix construction](./images/product_matrix_final.png)
+
+The three product tiles have widths:
+
+```text
+P1 : 16 columns
+P2 : 16 columns
+P3 :  5 columns
 ```
 
 Therefore:
 
-```text
-Weight Buffer
+\[
+16 + 16 + 5 = 37
+\]
 
-           Bank →
-        0      1      2          ... 15
+and the final product matrix has the expected shape:
 
-Addr 0  W11    W12    W13        ... W1,16
-Addr 1  W21    W22    W23        ... W2,16
-Addr 2  W31    W32    W33        ... W3,16
-  :
-Addr 8  W91    W92    W93        ... W9,16
-```
+\[
+P \in \mathbb{Z}^{40 \times 37}
+\]
 
-A complete physical weight tile therefore contains:
+which matches:
 
-```text
-9 × 16 = 144 weights
-```
-
-which corresponds exactly to the 144 processing elements in the
-systolic array.
-
-The two buffers therefore use different banking directions:
-
-| Buffer | Number of Banks | Parallel Dimension |
-|---|---:|---|
-| Activation Buffer | 9 | K |
-| Weight Buffer | 16 | OC |
-
-This organization directly reflects the 9 × 16 geometry of the
-systolic array.
+\[
+A_{40 \times 20} W_{20 \times 37} = P_{40 \times 37}
+\]
 
 ---
 
-# 4. Weight-Stationary Execution
+## 8. Product Buffer Mapping
 
-![Tile Execution](images/tile_execution.png)
+The Product Buffer is organized into **16 banks**, matching the number of systolic-array output columns.
 
-The systolic array uses a **weight-stationary dataflow**.
+![Product Buffer mapping](./images/product_buffer_mapping.png)
 
-For a given weight tile, weights are loaded into the processing
-elements and remain stationary while activation vectors are supplied
-to the array.
+Each final product tile contains 40 rows, so each tile occupies 40 addresses.
 
-Conceptually, a 9-element activation vector:
+The address mapping is:
 
 ```text
-[A(s,k+0), A(s,k+1), ... , A(s,k+8)]
+Address   0 ~  39 : Product Tile 1
+Address  40 ~  79 : Product Tile 2
+Address  80 ~ 119 : Product Tile 3
 ```
 
-is multiplied against a 9 × 16 weight tile:
+At a given address:
 
-```text
-                    16 output channels
-                ─────────────────────────►
+- Product Tile 1 uses all 16 banks.
+- Product Tile 2 uses all 16 banks.
+- Product Tile 3 uses only the first 5 banks.
 
-K element 0      W00  W01  ...  W0,15
-K element 1      W10  W11  ...  W1,15
-   :
-K element 8      W80  W81  ...  W8,15
-```
-
-to generate partial results for up to 16 output channels.
-
-The same stationary weights can then be reused for subsequent
-activation addresses.
-
-Therefore, once a 9 × 16 weight tile has been loaded, activation
-vectors are streamed from the Activation Buffer while the weights
-remain inside the systolic array.
+Thus, the Product Buffer layout directly matches the tiled output-column structure of the systolic array.
 
 ---
 
-# 5. Tiling Dimensions
+## 9. Complete Example
 
-A matrix operation may exceed the physical dimensions of the
-systolic array.
+For:
 
-The complete computation is therefore tiled along two major
-dimensions:
+\[
+A_{40 \times 20} \times W_{20 \times 37}
+\]
+
+the tiling parameters are:
 
 ```text
-K  → tiles of at most 9
-OC → tiles of at most 16
+Systolic-array rows    = 9
+Systolic-array columns = 16
+
+K tiles  = ceil(20 / 9)  = 3
+OC tiles = ceil(37 / 16) = 3
+
+Total tiled multiplications = 3 × 3 = 9
 ```
 
-The number of tiles is:
+The activation tiles are:
 
 ```text
-K_tiles  = ceil(K / 9)
-OC_tiles = ceil(OC / 16)
+A1 : 40 × 9
+A2 : 40 × 9
+A3 : 40 × 2 -> zero-padded to 40 × 9
 ```
 
-For example:
+The weight tiles are:
 
 ```text
-K = 27
-OC = 32
+W11 : 9 × 16
+W12 : 9 × 16
+W13 : 9 × 5
+
+W21 : 9 × 16
+W22 : 9 × 16
+W23 : 9 × 5
+
+W31 : 2 × 16
+W32 : 2 × 16
+W33 : 2 × 5
 ```
 
-requires:
+The multiplication sequence is:
 
 ```text
-K_tiles  = 3
-OC_tiles = 2
+#1  A1 × W11
+#2  A1 × W12
+#3  A1 × W13
+
+#4  A2 × W21
+#5  A2 × W22
+#6  A2 × W23
+
+#7  A3 × W31
+#8  A3 × W32
+#9  A3 × W33
 ```
 
-for a total of:
+The final product tiles are:
 
 ```text
-3 × 2 = 6
-```
-
-K/OC tile combinations.
-
----
-
-# 6. OC-Dimension Tiling
-
-If the number of output channels is greater than 16, the weight matrix
-is divided into groups of at most 16 output channels.
-
-For example:
-
-```text
-OC = 32
-
-OC Tile 0 → channels  0 ~ 15
-OC Tile 1 → channels 16 ~ 31
-```
-
-Each OC tile is mapped onto the 16 columns of the systolic array.
-
-Conceptually:
-
-```text
-                Weight Matrix
-
-          OC Tile 0       OC Tile 1
-        ┌─────────────┬─────────────┐
-        │   16 ch     │    16 ch    │
-        │             │             │
-        │             │             │
-        └─────────────┴─────────────┘
-```
-
-The activation data associated with the same `K` region can be reused
-when processing different OC tiles.
-
-Only the weight tile and output destination change.
-
----
-
-# 7. K-Dimension Tiling
-
-When `K > 9`, the reduction dimension cannot be processed by the
-physical array in a single execution.
-
-The matrices are therefore divided as:
-
-```text
-A = [ A0 | A1 | A2 | ... ]
-
-      K=9  K=9  K=9
+P1 = #1 + #4 + #7
+P2 = #2 + #5 + #8
+P3 = #3 + #6 + #9
 ```
 
 and:
 
 ```text
-        ┌ W0 ┐
-        │ W1 │
-W   =   │ W2 │
-        │ .. │
-        └────┘
+P = [P1 P2 P3]
 ```
 
-The matrix multiplication becomes:
+resulting in:
 
-```text
-C = A0W0 + A1W1 + A2W2 + ...
-```
-
-Each K tile therefore generates only a **partial sum** unless it is
-the only K tile.
-
-For example:
-
-```text
-K Tile 0
-
-A0 × W0
-   │
-   ▼
-PSUM0
-```
-
-followed by:
-
-```text
-K Tile 1
-
-A1 × W1
-   │
-   ▼
-new partial result
-   +
-PSUM0
-   │
-   ▼
-PSUM1
-```
-
-and finally:
-
-```text
-Last K Tile
-
-A_last × W_last
-       +
-previous PSUM
-       │
-       ▼
-final output
-```
-
-Therefore, the Product Buffer must preserve the partial result between
-K-tile executions.
+\[
+P \in \mathbb{Z}^{40 \times 37}
+\]
 
 ---
 
-# 8. First, Accumulate, and Last Tile
+## 10. Key Design Principles
 
-K-dimension tiling can be represented using three execution cases.
+The tiling scheme is based on four principles.
 
-### First K Tile
+### 1. Fixed K width
 
-The first tile initializes the output accumulation.
+The activation matrix is padded along the K dimension so that every activation tile has width 9. This allows every tile to use all 9 systolic-array rows without adding a special datapath for the final K tile.
 
-```text
-PSUM = A0 × W0
-```
+### 2. Valid-mask handling for output columns
 
-No previous Product Buffer value is required.
+The final output-column tile does not need to be padded to 16 valid outputs. Instead, invalid systolic-array columns are disabled using the valid signal.
 
-### Intermediate K Tile
+### 3. Partial-sum accumulation across K tiles
 
-An intermediate tile reads the previous partial sum and accumulates the
-new matrix multiplication result.
+Multiple K tiles contribute to the same final output tile. For example:
 
-```text
-PSUM_new = PSUM_old + Ai × Wi
-```
+\[
+P_1 = \#1 + \#4 + \#7
+\]
 
-### Last K Tile
+The Product Buffer therefore stores partial sums and provides them again when processing the next K tile.
 
-The final K tile performs the final accumulation:
+### 4. Fixed physical systolic-array structure
 
-```text
-OUTPUT = PSUM_old + A_last × W_last
-```
+Even when a logical tile is smaller than `9 × 16`, the physical systolic array remains unchanged.
 
-After the final K tile, the output is complete and can proceed to the
-required post-processing operation.
+Boundary conditions are handled through:
 
-Conceptually, the controller therefore distinguishes:
+- activation zero-padding for the K dimension;
+- valid masking for the output-column dimension.
 
-```text
-FIRST
-ACCUMULATE
-LAST
-```
-
-rather than treating every systolic-array execution as an independent
-matrix multiplication.
-
----
-
-# 9. Activation Buffer Capacity
-
-The Activation Buffer depth is intentionally kept at:
-
-```text
-ACTIVATION_BUFFER_DEPTH = 1024
-```
-
-instead of increasing the depth to 3072 simply to hold an entire
-32 × 32 RGB image simultaneously.
-
-A 32 × 32 channel contains:
-
-```text
-32 × 32 = 1024 activations
-```
-
-Therefore, one complete image channel fits in the current Activation
-Buffer.
-
-For the first RGB input, the three channels can be processed
-sequentially using the same general tiled-execution mechanism:
-
-```text
-R channel
-    ↓
-execute
-    ↓
-partial result
-
-G channel
-    ↓
-execute + accumulate
-    ↓
-partial result
-
-B channel
-    ↓
-execute + accumulate
-    ↓
-final result
-```
-
-This requires additional execution control compared with storing all
-three channels in a 3072-depth buffer, but avoids increasing the
-Activation Buffer solely for the first RGB layer.
-
----
-
-# 10. Why the Activation Buffer Remains 1024 Deep
-
-An alternative design would use:
-
-```text
-Activation Buffer Depth = 3072
-```
-
-allowing:
-
-```text
-[R: 1024][G: 1024][B: 1024]
-```
-
-to reside in the buffer simultaneously.
-
-This simplifies the initial RGB input handling, but has several
-disadvantages:
-
-1. It increases on-chip memory consumption.
-2. The additional capacity is primarily useful for the first RGB
-   layer.
-3. Later layers do not require a 3072-element spatial buffer per
-   channel.
-4. A tiling mechanism is required anyway for general matrix
-   operations that exceed the physical accelerator dimensions.
-5. The larger buffer therefore does not remove the need for general
-   tiling logic.
-
-For these reasons, the V2 architecture keeps the Activation Buffer
-depth at 1024 and handles larger logical inputs through repeated tile
-execution.
-
-The same mechanism can therefore be reused for both:
-
-```text
-RGB channel decomposition
-```
-
-and more general:
-
-```text
-K-dimension tiling
-```
-
-instead of implementing a special large buffer specifically for the
-first convolution layer.
-
----
-
-# 11. Partial-Sum Feedback
-
-K tiling requires the result generated by one execution to be reused
-by the next execution.
-
-The conceptual datapath is:
-
-```text
-                    ┌───────────────────┐
-                    │                   │
-                    │                   ▼
-Activation ──► Systolic Array ──► Product Buffer
-                    ▲                   │
-                    │                   │
-                    └──── PSUM feedback ┘
-```
-
-For the first K tile:
-
-```text
-feedback disabled
-```
-
-For subsequent K tiles:
-
-```text
-feedback enabled
-```
-
-and the previous Product Buffer value is accumulated with the newly
-generated result.
-
-The final result is therefore written only after all required K tiles
-have contributed to the output.
-
----
-
-# 12. Overall Tile Execution
-
-At a high level, a matrix multiplication can be represented as:
-
-```text
-for each OC tile:
-
-    for each K tile:
-
-        load weight tile
-
-        configure:
-            first / accumulate / last
-
-        for each required activation address:
-
-            read 9 activation banks
-
-            execute systolic array
-
-            write or accumulate product
-```
-
-The exact controller scheduling may overlap loading and execution, but
-the logical mapping remains:
-
-```text
-K tile
-   │
-   ├── Activation: 9 K-elements in parallel
-   │
-   └── Weight: 9 × 16 tile
-                 │
-                 ▼
-          9 × 16 Systolic Array
-                 │
-                 ▼
-             partial sum
-                 │
-          ┌──────┴──────┐
-          │             │
-      more K?          no
-          │             │
-          ▼             ▼
-      feedback      final output
-```
-
----
-
-# 13. Handling Non-Multiple Dimensions
-
-`K` and `OC` are not required to be exact multiples of 9 and 16.
-
-For the final tile:
-
-```text
-valid_K  = min(9,  K  - K_base)
-valid_OC = min(16, OC - OC_base)
-```
-
-Only valid matrix elements contribute to the computation.
-
-Unused positions in the physical tile must either:
-
-- be filled with zero, or
-- be disabled through valid control,
-
-so that they do not affect the final result.
-
-This allows the same physical 9 × 16 array to support arbitrary matrix
-dimensions.
-
----
-
-# 14. Relationship to Convolution
-
-The systolic array itself performs matrix multiplication and does not
-need to directly understand convolution geometry.
-
-For a convolution layer, the controller/input-loading logic transforms
-the required convolution window into the `K` dimension expected by the
-matrix multiplication engine.
-
-Conceptually:
-
-```text
-Input Feature Map
-       │
-       │ window extraction / im2col
-       ▼
-Activation Matrix A[S × K]
-       │
-       │ tiled GEMM
-       ▼
-9 × 16 Systolic Array
-       │
-       ▼
-Output Matrix C[S × OC]
-       │
-       │ reshape
-       ▼
-Output Feature Map
-```
-
-For a 3 × 3 convolution:
-
-```text
-K = Cin × 3 × 3
-```
-
-so increasing the number of input channels naturally increases the
-number of K tiles.
-
-The systolic array itself remains unchanged.
-
----
-
-# 15. Design Rationale
-
-The tiling architecture is designed around three principles.
-
-### 1. Match the Physical Array
-
-The buffer organization directly exposes:
-
-```text
-9 activation values
-×
-16 output-channel weights
-```
-
-to the 9 × 16 systolic array.
-
-### 2. Reuse Data
-
-Weight-stationary execution keeps the current weight tile inside the
-array while multiple activation vectors are processed.
-
-Activation data can also be reused across different OC tiles.
-
-### 3. Keep On-Chip Storage Small
-
-Instead of increasing buffer capacity for specific layers, larger
-logical operations are decomposed into tiles.
-
-This keeps the hardware architecture independent of a particular
-layer size and allows the same execution mechanism to be reused across
-the network.
-
----
-
-# 16. Current V2 Configuration
-
-| Parameter | Value |
-|---|---:|
-| Systolic Array | 9 × 16 |
-| Processing Elements | 144 |
-| Dataflow | Weight-stationary |
-| K Tile Size | 9 |
-| OC Tile Size | 16 |
-| Activation Buffer Banks | 9 |
-| Activation Buffer Depth | 1024 |
-| Weight Buffer Banks | 16 |
-| K-Tile Accumulation | Product Buffer feedback |
-| Large-input handling | Tiled execution |
-
-The main design goal is therefore not to make the on-chip buffers
-large enough to contain every possible layer at once.
-
-Instead, the accelerator provides a fixed 9 × 16 compute structure
-and fixed-size local buffers, while the controller decomposes larger
-operations into a sequence of reusable tile executions.
+Therefore, arbitrary matrix dimensions can be processed using the same fixed **9 × 16 systolic-array datapath**.
