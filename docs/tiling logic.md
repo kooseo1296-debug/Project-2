@@ -4,7 +4,7 @@ This document explains how matrix tiling, buffer mapping, tiled matrix multiplic
 
 The following matrix multiplication is used as an example:
 
-<img width="2570" height="888" alt="image" src="https://github.com/user-attachments/assets/5be0319a-7b9c-488b-8f06-7371cd2a9e60" />
+<img alt="image" src="https://github.com/user-attachments/assets/5be0319a-7b9c-488b-8f06-7371cd2a9e60" />
 
 ```
 A : 40 × 20
@@ -23,13 +23,7 @@ where:
 
 ## 1. Activation Matrix
 
-The original activation matrix has size:
-
-\[
-A \in \mathbb{Z}^{40 \times 20}
-\]
-
-![Original activation matrix](./images/activation_matrix_original.png)
+<img alt="image" src="https://github.com/user-attachments/assets/a7ac582e-d4c6-47ea-89a6-53abf4beb1a8" />
 
 The systolic array can process **9 values along the K dimension at once**. Therefore, the 20 activation columns are divided into groups of 9.
 
@@ -39,13 +33,9 @@ The activation matrix is divided into:
 - Tile `2`: `40 × 9`
 - Tile `3`: `40 × 2`
 
-Since the third tile contains only two valid columns, the remaining seven columns are zero-padded. Therefore, the tiled activation matrix has an effective size of:
+Since the third tile contains only two valid columns, the remaining seven columns are zero-padded. Therefore, the tiled activation matrix has an effective size of **40 × 27.**
 
-\[
-40 \times 27
-\]
-
-![Tiled activation matrix](./images/activation_matrix_tiled.png)
+<img alt="image" src="https://github.com/user-attachments/assets/545f51dd-34e0-48ec-84c7-2763cb7e1cf9" />
 
 The three activation tiles correspond to:
 
@@ -63,7 +53,7 @@ The zero-padding allows every activation tile to have a fixed width of 9, matchi
 
 The Activation Buffer is organized into **9 banks**, corresponding to the 9 rows of the systolic array.
 
-![Activation buffer mapping](./images/activation_buffer_mapping.png)
+<img alt="image" src="https://github.com/user-attachments/assets/8ea275bc-6b69-4dab-b334-0c936307d39a" />
 
 Each activation tile contains 40 rows. Therefore, each tile occupies 40 addresses across the 9 banks.
 
@@ -93,17 +83,11 @@ Thus, one Activation Buffer read provides one complete 9-element activation vect
 
 ## 3. Weight Matrix
 
-The original weight matrix has size:
-
-\[
-W \in \mathbb{Z}^{20 \times 37}
-\]
-
-![Original weight matrix](./images/weight_matrix_original.png)
+<img alt="image" src="https://github.com/user-attachments/assets/6890154f-e47c-450f-ac2d-1da6031b33e7" />
 
 The systolic array processes 9 values along the K dimension and 16 output columns at once. Therefore, the weight matrix is divided into **9 × 16 tiles**.
 
-![Tiled weight matrix](./images/weight_matrix_tiled.png)
+<img alt="image" src="https://github.com/user-attachments/assets/250d93cf-36db-40f6-a199-b6f09d9f7976" />
 
 The resulting weight tiles are:
 
@@ -135,17 +119,9 @@ Only systolic-array columns `[4:0]` are treated as valid. The remaining columns 
 
 Tiles `W31`, `W32`, and `W33` contain only two valid K rows.
 
-No special arithmetic handling is required because the corresponding activation tile has already been zero-padded from width 2 to width 9. For the padded K positions:
+No special arithmetic handling is required because the corresponding activation tile has already been zero-padded from width 2 to width 8. For the padded K positions therefore:
 
-\[
-A_{\text{padding}} = 0
-\]
-
-and therefore:
-
-\[
-A_{\text{padding}} \times W = 0
-\]
+0 × W = 0
 
 regardless of the undefined or unused weight values in those rows.
 
@@ -157,7 +133,7 @@ Thus, the same 9-row systolic-array datapath can process the final K tile withou
 
 The Weight Buffer is organized into **16 banks**, corresponding to the 16 columns of the systolic array.
 
-![Weight buffer mapping](./images/weight_buffer_mapping.png)
+<img alt="image" src="https://github.com/user-attachments/assets/69d3aa29-cbf1-4ff0-a157-6650a5b1e2ee" />
 
 A full `9 × 16` weight tile occupies:
 
@@ -211,7 +187,7 @@ The execution order is:
 
 ### Steps #1 ~ #3
 
-![Tiled matrix multiplication #1 to #3](./images/matmul_steps_1_3.png)
+<img alt="image" src="https://github.com/user-attachments/assets/fd2571ad-f7f2-4324-b113-60d0b06e3a93" />
 
 Activation Tile 1 is reused while the weight tile moves across the three output-column groups:
 
@@ -225,7 +201,7 @@ For `#3`, only five systolic-array columns are valid. The bold blue outline in t
 
 ### Steps #4 ~ #6
 
-![Tiled matrix multiplication #4 to #6](./images/matmul_steps_4_6.png)
+<img alt="image" src="https://github.com/user-attachments/assets/21be5318-7d15-4f96-b0ad-4d76be5f5954" />
 
 Activation Tile 2 is then processed:
 
@@ -239,7 +215,7 @@ These products contribute to the same final output-column groups as `#1`, `#2`, 
 
 ### Steps #7 ~ #9
 
-![Tiled matrix multiplication #7 to #9](./images/matmul_steps_7_9.png)
+<img width="972" height="483" alt="image" src="https://github.com/user-attachments/assets/342b6af8-beec-49d7-8d5c-b31b82da120a" />
 
 Finally, the zero-padded Activation Tile 3 is processed:
 
@@ -272,18 +248,12 @@ The first output tile is obtained from:
 P_1 = \#1 + \#4 + \#7
 \]
 
-![Product Tile 1 accumulation](./images/product_tile_1_accumulation.png)
+<img alt="image" src="https://github.com/user-attachments/assets/2ed7fcc5-c833-4acb-b9d5-89b1c03ac431" />
 
 Therefore:
 
 \[
 P_1 = A_1W_{11} + A_2W_{21} + A_3W_{31}
-\]
-
-and:
-
-\[
-P_1 \in \mathbb{Z}^{40 \times 16}
 \]
 
 ### 6.2 Product Tile 2
@@ -294,18 +264,12 @@ The second output tile is obtained from:
 P_2 = \#2 + \#5 + \#8
 \]
 
-![Product Tile 2 accumulation](./images/product_tile_2_accumulation.png)
+<img alt="image" src="https://github.com/user-attachments/assets/32803b5d-a6dc-46d1-a92f-64c74a344218" />
 
 Therefore:
 
 \[
 P_2 = A_1W_{12} + A_2W_{22} + A_3W_{32}
-\]
-
-and:
-
-\[
-P_2 \in \mathbb{Z}^{40 \times 16}
 \]
 
 ### 6.3 Product Tile 3
@@ -316,7 +280,7 @@ The final output tile is obtained from:
 P_3 = \#3 + \#6 + \#9
 \]
 
-![Product Tile 3 accumulation](./images/product_tile_3_accumulation.png)
+<img alt="image" src="https://github.com/user-attachments/assets/47789236-74b4-4708-9bab-5ee657ec732c" />
 
 Only five output columns are valid in this tile.
 
@@ -324,12 +288,6 @@ Therefore:
 
 \[
 P_3 = A_1W_{13} + A_2W_{23} + A_3W_{33}
-\]
-
-and:
-
-\[
-P_3 \in \mathbb{Z}^{40 \times 5}
 \]
 
 ---
@@ -342,7 +300,7 @@ The three accumulated product tiles are concatenated along the output-column dim
 P = [P_1 \; P_2 \; P_3]
 \]
 
-![Final product matrix construction](./images/product_matrix_final.png)
+<img alt="image" src="https://github.com/user-attachments/assets/a962e5fe-e636-4a67-bd6c-f3c5bf337987" />
 
 The three product tiles have widths:
 
@@ -360,15 +318,11 @@ Therefore:
 
 and the final product matrix has the expected shape:
 
-\[
-P \in \mathbb{Z}^{40 \times 37}
-\]
+P : 40 × 37
 
 which matches:
 
-\[
-A_{40 \times 20} W_{20 \times 37} = P_{40 \times 37}
-\]
+A{40 × 20} × W{20 × 37} = P{40 × 37}
 
 ---
 
@@ -376,7 +330,7 @@ A_{40 \times 20} W_{20 \times 37} = P_{40 \times 37}
 
 The Product Buffer is organized into **16 banks**, matching the number of systolic-array output columns.
 
-![Product Buffer mapping](./images/product_buffer_mapping.png)
+<img alt="image" src="https://github.com/user-attachments/assets/9e98c7e3-f9c7-41fb-99a3-f975cb57f3c3" />
 
 Each final product tile contains 40 rows, so each tile occupies 40 addresses.
 
@@ -403,7 +357,7 @@ Thus, the Product Buffer layout directly matches the tiled output-column structu
 For:
 
 \[
-A_{40 \times 20} \times W_{20 \times 37}
+A{40 × 20} × W{20 × 37}
 \]
 
 the tiling parameters are:
@@ -475,40 +429,5 @@ P = [P1 P2 P3]
 resulting in:
 
 \[
-P \in \mathbb{Z}^{40 \times 37}
+P{40 × 37}
 \]
-
----
-
-## 10. Key Design Principles
-
-The tiling scheme is based on four principles.
-
-### 1. Fixed K width
-
-The activation matrix is padded along the K dimension so that every activation tile has width 9. This allows every tile to use all 9 systolic-array rows without adding a special datapath for the final K tile.
-
-### 2. Valid-mask handling for output columns
-
-The final output-column tile does not need to be padded to 16 valid outputs. Instead, invalid systolic-array columns are disabled using the valid signal.
-
-### 3. Partial-sum accumulation across K tiles
-
-Multiple K tiles contribute to the same final output tile. For example:
-
-\[
-P_1 = \#1 + \#4 + \#7
-\]
-
-The Product Buffer therefore stores partial sums and provides them again when processing the next K tile.
-
-### 4. Fixed physical systolic-array structure
-
-Even when a logical tile is smaller than `9 × 16`, the physical systolic array remains unchanged.
-
-Boundary conditions are handled through:
-
-- activation zero-padding for the K dimension;
-- valid masking for the output-column dimension.
-
-Therefore, arbitrary matrix dimensions can be processed using the same fixed **9 × 16 systolic-array datapath**.
