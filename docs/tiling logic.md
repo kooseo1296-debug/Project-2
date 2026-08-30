@@ -121,7 +121,7 @@ Tiles `W31`, `W32`, and `W33` contain only two valid K rows.
 
 No special arithmetic handling is required because the corresponding activation tile has already been zero-padded from width 2 to width 8. For the padded K positions therefore:
 
-0 × W = 0
+$0 × W = 0$
 
 regardless of the undefined or unused weight values in those rows.
 
@@ -244,41 +244,31 @@ Each output-column tile is produced by accumulating the partial products generat
 
 The first output tile is obtained from:
 
-\[
-P_1 = \#1 + \#4 + \#7
-\]
+$P_1$ = #1 + #4 + #7
 
 <img alt="image" src="https://github.com/user-attachments/assets/2ed7fcc5-c833-4acb-b9d5-89b1c03ac431" />
 
 Therefore:
 
-\[
-P_1 = A_1W_{11} + A_2W_{21} + A_3W_{31}
-\]
+$P_1 = A_1W_{11} + A_2W_{21} + A_3W_{31}$
 
 ### 6.2 Product Tile 2
 
 The second output tile is obtained from:
 
-\[
-P_2 = \#2 + \#5 + \#8
-\]
+$P_2$ = #2 + #5 + #8
 
 <img alt="image" src="https://github.com/user-attachments/assets/32803b5d-a6dc-46d1-a92f-64c74a344218" />
 
 Therefore:
 
-\[
-P_2 = A_1W_{12} + A_2W_{22} + A_3W_{32}
-\]
+$P_2 = A_1W_{12} + A_2W_{22} + A_3W_{32}$
 
 ### 6.3 Product Tile 3
 
 The final output tile is obtained from:
 
-\[
-P_3 = \#3 + \#6 + \#9
-\]
+$P_3$= #3 + #6 + #9
 
 <img alt="image" src="https://github.com/user-attachments/assets/47789236-74b4-4708-9bab-5ee657ec732c" />
 
@@ -286,9 +276,7 @@ Only five output columns are valid in this tile.
 
 Therefore:
 
-\[
-P_3 = A_1W_{13} + A_2W_{23} + A_3W_{33}
-\]
+$P_3 = A_1W_{13} + A_2W_{23} + A_3W_{33}$
 
 ---
 
@@ -296,9 +284,7 @@ P_3 = A_1W_{13} + A_2W_{23} + A_3W_{33}
 
 The three accumulated product tiles are concatenated along the output-column dimension:
 
-\[
-P = [P_1 \; P_2 \; P_3]
-\]
+$P = [P_1 \; P_2 \; P_3]$
 
 <img alt="image" src="https://github.com/user-attachments/assets/a962e5fe-e636-4a67-bd6c-f3c5bf337987" />
 
@@ -312,17 +298,13 @@ P3 :  5 columns
 
 Therefore:
 
-\[
-16 + 16 + 5 = 37
-\]
+$16 + 16 + 5 = 37$
 
-and the final product matrix has the expected shape:
-
-P : 40 × 37
+and the final product matrix has the expected shape: 40 × 37
 
 which matches:
 
-A{40 × 20} × W{20 × 37} = P{40 × 37}
+$A_{40 × 20} × W_{20 × 37} = P_{40 × 37}$
 
 ---
 
@@ -356,9 +338,7 @@ Thus, the Product Buffer layout directly matches the tiled output-column structu
 
 For:
 
-\[
-A{40 × 20} × W{20 × 37}
-\]
+$A_{40 × 20} × W_{20 × 37}$
 
 the tiling parameters are:
 
@@ -428,6 +408,4 @@ P = [P1 P2 P3]
 
 resulting in:
 
-\[
-P{40 × 37}
-\]
+$P_{40 × 37}$
