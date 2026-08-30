@@ -199,8 +199,8 @@ The first experiment evaluates the effect of moving end-to-end inference executi
 | Metric | Baseline | End-to-End |
 |---|---:|---:|
 | Fmax | 125 MHz | TBD |
-| Cycles / image | TBD | TBD |
-| Time / image | TBD | TBD |
+| Cycles / image | N/A | TBD |
+| Time / image | 5.803 ms | TBD |
 | LUT | 3060 | TBD |
 | FF | 6175 | TBD |
 | BRAM | 116.5 | TBD |
