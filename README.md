@@ -362,3 +362,43 @@ Effect of exploiting activation sparsity
 ```
 
 This allows the performance contribution and hardware cost of each optimization to be evaluated separately.
+
+---
+
+# Current Status
+
+The baseline **V1** design has been successfully implemented and
+validated on the PYNQ-Z2 using Vitis.
+
+- **Post-implementation Fmax:** 125 MHz
+- **Inference accuracy:** 919 / 1000 (91.9%)
+
+For **V2**, two modifications were evaluated to move more of the
+inference pipeline toward a hardware-friendly implementation:
+
+| Configuration | Accuracy | Result |
+|---|---:|---|
+| V1 baseline | 919 / 1000 (91.9%) | Baseline |
+| Shift-based requantization | 915 / 1000 (91.5%) | Adopted for V2 |
+| Shift-based requantization + simplified preprocessing | 109 / 1000 (10.9%) | Rejected |
+
+## V2 Design Decision
+
+The original requantization was replaced with a **shift-based
+requantization scheme**, allowing the scaling operation to be
+implemented using hardware-friendly shift and rounding logic. This
+modification resulted in only a **0.4 percentage-point accuracy
+reduction** compared with V1.
+
+A simplified preprocessing scheme was also evaluated by removing the
+standard-deviation division from input normalization. However, the
+accuracy dropped significantly to **10.9%**.
+
+Based on these results, V2 adopts the following HW/SW partitioning:
+
+- **PL:** shift-based requantization
+- **PS:** input preprocessing, including the original normalization
+
+This keeps the preprocessing behavior required for model accuracy
+while moving the requantization operation into the PL for a more
+hardware-efficient inference pipeline.
