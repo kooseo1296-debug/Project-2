@@ -5,7 +5,7 @@
 This project investigates how the execution structure of an FPGA-based neural processing unit (NPU) affects inference latency and hardware efficiency.
 
 The project is motivated by the live-demo implementation of our previous FPGA NPU, where frequent data transfers and software intervention between the Processing System (PS) and Programmable Logic (PL) contributed substantially to end-to-end inference time.
-[watch live demo video](https://drive.google.com/drive/folders/1PVky3DpYcxO1PA3LiZYOdY6wQItQFhgZ?dmr=1&ec=wgc-drive-hero-goto)
+[watch live demo video](https://drive.google.com/file/d/1lzkIqhfIcX4UrQ2W33rvNfDzw1MxMoIF/view?usp=drive_link)
 The primary goal of this project is therefore to reduce inference time while maintaining a common hardware platform and PS–PL interface.
 
 Three NPU engines are implemented and evaluated:
