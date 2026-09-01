@@ -4,7 +4,8 @@ This document describes the **Baseline (V1) architecture** of the FPGA MatMul ac
 
 The Baseline is intentionally designed as a **PS-managed inference architecture**. The Processing System (PS) performs CNN-level data preparation and scheduling, while the Programmable Logic (PL) is responsible for tiled matrix multiplication.
 
-<img alt="image" src="https://github.com/user-attachments/assets/2303bd4a-1c91-4001-9170-45995c5e09ee" />
+<img alt="image" src="https://github.com/user-attachments/assets/7b82b2bb-ee0e-44e4-917d-90a83bf4f7ef" />
+
 
 ---
 
