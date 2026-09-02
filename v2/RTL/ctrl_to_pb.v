@@ -1,3 +1,4 @@
+`timescale 1ns / 1ps
 `include "param.v"
 
 module ctrl_to_pb #(
