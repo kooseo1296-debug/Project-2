@@ -22,16 +22,20 @@ module ProductLoader #(
 
     reg [BIT_DATA*PIPE_DEPTH-1:0] pipe;
 
+    reg [BIT_DATA-1:0] Bias; //Considers Reading time delay
+    
     integer i;
 
     always @(posedge CLK) begin
         if (RST) begin
             En_Tile <= 1'b0;
             pipe <= {BIT_DATA*PIPE_DEPTH{1'b0}};
+            Bias  <= {BIT_DATA{1'b0}};
         end
         else begin
             En_Tile <= En_Tile_In;
-            pipe[0 +: BIT_DATA] <= En_Tile? Data_In : Bias_In;
+            Bias <= Bias_In;
+            pipe[0 +: BIT_DATA] <= En_Tile? Data_In : Bias;
             for (i = 1;i < PIPE_DEPTH;i = i + 1) begin
                 pipe[i*BIT_DATA+: BIT_DATA] <= pipe[(i-1)*BIT_DATA+: BIT_DATA];
             end

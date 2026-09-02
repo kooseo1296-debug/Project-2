@@ -28,11 +28,10 @@ module sa_to_pb #(
     reg Prev_En_ReLU;
     reg [BIT_MSB-1:0] Max_MSB_Reg;
 
-    wire FinishFlag_In;
-    wire Max_Valid_In;
-    wire [BIT_DATA-1:0] ReLU_Psum;
+    wire FinishFlag;
+    wire Max_Valid;
+    wire [BIT_DATA-1:0] Psum;
     wire [BIT_MSB-1:0] Current_MSB;
-    wire [BIT_MSB-1:0] Max_MSB_In;
 
     localparam integer PIPE_WIDTH = BIT_ADDR + 1 + BIT_DATA + 1 + BIT_MSB + 1;
     reg [PIPE_WIDTH*DELAY-1:0] pipe;
@@ -44,17 +43,16 @@ module sa_to_pb #(
         integer k;
         begin
             Find_MSB = {BIT_MSB{1'b0}};
-            for (k=0; k<BIT_DATA; k=k+1)
+            for (k=0; k<BIT_DATA-1; k=k+1)
                 if (Data[k]) Find_MSB = k;
         end
     endfunction
 
-    assign FinishFlag_In = Prev_Valid_P & ~In_Valid_P;
-    assign Max_Valid_In = Prev_En_ReLU & ~In_En_ReLU;
+    assign FinishFlag = Prev_Valid_P & ~In_Valid_P;
+    assign Max_Valid = Prev_En_ReLU & ~In_En_ReLU;
 
-    assign ReLU_Psum = (In_En_ReLU && In_Psum[BIT_DATA-1]) ? {BIT_DATA{1'b0}} : In_Psum;
-    assign Current_MSB = Find_MSB(ReLU_Psum);
-    assign Max_MSB_In = Max_Valid_In ? Max_MSB_Reg : {BIT_MSB{1'b0}};
+    assign Psum = (In_En_ReLU && In_Psum[BIT_DATA-1]) ? {BIT_DATA{1'b0}} : In_Psum;
+    assign Current_MSB = Find_MSB(Psum);
 
     always @(posedge CLK) begin
         if (RST) begin
@@ -67,13 +65,12 @@ module sa_to_pb #(
             Prev_Valid_P <= In_Valid_P;
             Prev_En_ReLU <= In_En_ReLU;
 
-            if (In_En_ReLU && In_Valid_P && !In_Psum[BIT_DATA-1] && (In_Psum != {BIT_DATA{1'b0}})) begin
-                if (Current_MSB > Max_MSB_Reg) Max_MSB_Reg <= Current_MSB;
-            end
+            if (In_En_ReLU && (Current_MSB > Max_MSB_Reg))
+                Max_MSB_Reg <= Current_MSB;
 
-            if (Max_Valid_In) Max_MSB_Reg <= {BIT_MSB{1'b0}};
+            if (Max_Valid) Max_MSB_Reg <= {BIT_MSB{1'b0}};
 
-            pipe[0 +: PIPE_WIDTH] <= {In_Addr_P, In_Valid_P, ReLU_Psum, FinishFlag_In, Max_MSB_In, Max_Valid_In};
+            pipe[0 +: PIPE_WIDTH] <= {In_Addr_P, In_Valid_P, Psum, FinishFlag, Max_MSB_Reg, Max_Valid};
 
             for (i=1; i<DELAY; i=i+1)
                 pipe[i*PIPE_WIDTH +: PIPE_WIDTH] <= pipe[(i-1)*PIPE_WIDTH +: PIPE_WIDTH];
