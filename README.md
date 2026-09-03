@@ -5,14 +5,16 @@
 This project investigates how the execution structure of an FPGA-based neural processing unit (NPU) affects inference latency and hardware efficiency.
 
 The project is motivated by the live-demo implementation of our previous FPGA NPU, where frequent data transfers and software intervention between the Processing System (PS) and Programmable Logic (PL) contributed substantially to end-to-end inference time.
-[watch live demo video](https://drive.google.com/file/d/1lzkIqhfIcX4UrQ2W33rvNfDzw1MxMoIF/view?usp=drive_link)
+
+[Watch Live Demo Video](https://drive.google.com/file/d/1lzkIqhfIcX4UrQ2W33rvNfDzw1MxMoIF/view?usp=drive_link)
+
 The primary goal of this project is therefore to reduce inference time while maintaining a common hardware platform and PS–PL interface.
 
 Three NPU engines are implemented and evaluated:
 
-1. **Baseline Engine** — PS-managed inference with frequent PS–PL communication
-2. **v2: End-to-End Engine** — complete CNN inference is executed inside the PL
-3. **v3: Zero-Skip Engine** — end-to-end PL inference with column-level activation zero-skipping
+1. **Baseline Engine (V1)** — PS-managed inference with frequent PS–PL communication
+2. **End-to-End Engine (V2)** — complete CNN inference is executed inside the PL
+3. **Zero-Skip Engine (V3)** — end-to-end PL inference with column-level activation zero-skipping
 
 The main evaluation metrics are:
 
@@ -62,13 +64,13 @@ This project investigates whether moving the complete inference process into the
 
 ## Architecture
 
-The accelerator is implemented on the PL of the PYNQ-Z2
-and controlled by the ARM Cortex-A9 through AXI4-Lite.
+The accelerator is implemented on the PL of the PYNQ-Z2 and controlled by the ARM Cortex-A9 through AXI4-Lite.
 
-<img width="2167" height="1345" alt="image" src="https://github.com/user-attachments/assets/d07c178a-a154-41b9-8dd4-33fca6cecf90" />
+<img width="2167" height="1345" alt="NPU Architecture" src="https://github.com/user-attachments/assets/d07c178a-a154-41b9-8dd4-33fca6cecf90" />
 
-### Current Baseline
-- 9×16 weight-stationary systolic array
+### Current Baseline Architecture
+
+- 9 × 16 weight-stationary systolic array
 - 144 processing elements
 - Activation / Weight / Product buffers
 - AXI4-Lite PS–PL interface
@@ -76,6 +78,9 @@ and controlled by the ARM Cortex-A9 through AXI4-Lite.
 
 For implementation details and dataflow, see
 [Architecture Documentation](docs/architecture.md).
+
+For matrix mapping and tiling details, see
+[Tiling and Buffer Mapping](docs/tiling_logic.md).
 
 ---
 
@@ -90,9 +95,22 @@ Compute array   : 9 × 16 systolic array
 PS–PL interface : 32-bit AXI4-Lite
 Block Design    : Fixed across all engines
 AXI protocol    : Fixed across all engines
+Vivado          : 2025.2.1
+Vitis           : 2025.2
 ```
 
-Keeping the platform and external interface unchanged allows the effects of execution restructuring and zero-skipping to be evaluated independently.
+### PS–PL Integration
+
+The ARM Cortex-A9 Processing System communicates with the NPU implemented in the Programmable Logic through the Zynq PS `M_AXI_GP0` interface and an AXI SmartConnect.
+
+<img alt="image" src="https://github.com/user-attachments/assets/7e7ec4f5-63bd-4fc2-8755-c8d0649dc674" />
+
+
+The PS acts as the AXI master, while the NPU IP is connected as an AXI slave.
+
+The same PS–PL interface and Vivado Block Design are maintained across all three engine configurations. This keeps the external communication architecture fixed so that performance differences can be attributed primarily to changes inside the NPU engine.
+
+Keeping the platform, toolchain, and external interface unchanged across the three engines allows the effects of execution restructuring and zero-skipping to be evaluated independently.
 
 ---
 
@@ -135,7 +153,7 @@ The PS is responsible for executing the CNN at the network level, while the PL o
 
 Intermediate results are repeatedly transferred between the PS and PL during inference.
 
-### Expected Characteristics
+### Characteristics
 
 - Low PL control complexity
 - Lower hardware-resource overhead
@@ -169,7 +187,8 @@ After model data and an input image are provided, the PL autonomously executes t
 |               ↓                  |
 |           9 × 16 SA              |
 |               ↓                  |
-|     Activation / Pooling         |
+|        ReLU / Requantize         |
+|        Pooling / Feedback        |
 |               ↓                  |
 |     Intermediate Features        |
 |               ↓                  |
@@ -185,6 +204,8 @@ After model data and an input image are provided, the PL autonomously executes t
 ```
 
 Intermediate feature data remains inside the PL instead of repeatedly returning to the PS.
+
+Input preprocessing remains a PS task, while network-level operations after preprocessing are moved toward PL execution.
 
 The main hypothesis is:
 
@@ -278,7 +299,7 @@ Zero Detection
   │           │
   ↓           ↓
 Next       Send to
-Address    9×16 SA
+Address    9 × 16 SA
 ```
 
 The objective is to exploit activation sparsity to reduce unnecessary computation.
@@ -320,7 +341,7 @@ In addition to average inference latency, zero-column frequency will be profiled
 
 # Research Questions
 
-This project focuses on two primary questions:
+This project focuses on two primary questions.
 
 ### RQ1 — PS–PL Execution Partition
 
@@ -340,11 +361,9 @@ The three engines are evaluated under a common implementation environment.
                  Engine 1
                PS-managed
                     │
-                    │
                     ▼
                  Engine 2
               End-to-End PL
-                    │
                     │
                     ▼
                  Engine 3
@@ -363,18 +382,22 @@ Effect of exploiting activation sparsity
 
 This allows the performance contribution and hardware cost of each optimization to be evaluated separately.
 
+To maintain comparability, reported implementation results are generated using the same Vivado version and common system-level Block Design.
+
 ---
 
 # Current Status
 
-The baseline **V1** design has been successfully implemented and
-validated on the PYNQ-Z2 using Vitis.
+The baseline **V1** design has been successfully implemented and validated on the PYNQ-Z2 using the Vivado/Vitis flow.
 
+### V1 Baseline
+
+- **Vivado:** 2025.2.1
+- **Vitis:** 2025.2
 - **Post-implementation Fmax:** 125 MHz
 - **Inference accuracy:** 919 / 1000 (91.9%)
 
-For **V2**, two modifications were evaluated to move more of the
-inference pipeline toward a hardware-friendly implementation:
+For **V2**, two modifications were evaluated before their integration into the PL:
 
 | Configuration | Accuracy | Result |
 |---|---:|---|
@@ -384,21 +407,70 @@ inference pipeline toward a hardware-friendly implementation:
 
 ## V2 Design Decision
 
-The original requantization was replaced with a **shift-based
-requantization scheme**, allowing the scaling operation to be
-implemented using hardware-friendly shift and rounding logic. This
-modification resulted in only a **0.4 percentage-point accuracy
-reduction** compared with V1.
+The original requantization was replaced with a **hardware-friendly shift-based requantization scheme**.
 
-A simplified preprocessing scheme was also evaluated by removing the
-standard-deviation division from input normalization. However, the
-accuracy dropped significantly to **10.9%**.
+Instead of relying on an arbitrary scaling operation, the modified scheme determines a shift amount from the activation range and performs requantization using shift and rounding operations.
+
+The resulting inference accuracy was:
+
+```text
+V1 baseline                 : 919 / 1000 (91.9%)
+Shift-based requantization  : 915 / 1000 (91.5%)
+Difference                  : -0.4 percentage points
+```
+
+The limited accuracy degradation supports moving the shift-based requantization logic into the PL for V2.
+
+A simplified preprocessing scheme was also evaluated by removing the standard-deviation division from input normalization. However, this reduced accuracy to:
+
+```text
+109 / 1000 (10.9%)
+```
+
+The simplified preprocessing scheme was therefore rejected.
 
 Based on these results, V2 adopts the following HW/SW partitioning:
 
-- **PL:** shift-based requantization
-- **PS:** input preprocessing, including the original normalization
+```text
+PS
+│
+├── Input acquisition
+└── Original input normalization
+        │
+        ▼
+       PL
+        │
+        ├── Convolution / Matrix Multiplication
+        ├── Bias
+        ├── ReLU
+        ├── Shift-based Requantization
+        ├── Max Pooling
+        ├── GAP
+        ├── Fully Connected Layers
+        └── Classification
+```
 
-This keeps the preprocessing behavior required for model accuracy
-while moving the requantization operation into the PL for a more
-hardware-efficient inference pipeline.
+Thus, **input preprocessing remains a PS task**, while the hardware-friendly requantization scheme is targeted for implementation inside the PL.
+
+---
+
+# Planned Development
+
+The project is developed incrementally.
+
+```text
+V1
+Baseline PS-managed inference
+        │
+        ▼
+V2
+End-to-end PL inference
++ shift-based requantization
+        │
+        ▼
+V3
+End-to-end PL inference
++ column-level ZeroSkip
+```
+
+The final comparison will evaluate the performance benefit and hardware cost introduced at each stage while maintaining a common FPGA platform, toolchain, and PS–PL interface.
