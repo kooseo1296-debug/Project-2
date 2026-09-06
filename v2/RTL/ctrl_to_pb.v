@@ -56,6 +56,7 @@ reg [BIT_ADDR-1:0] selected_addr_reg;
 reg selected_en_requant_reg;
 reg selected_en_maxpool_reg;
 reg selected_to_ctrl_reg;
+reg [BIT_SHIFT-1:0] selected_shift_reg;
 
 reg [BIT_DATA-1:0] requant_data;
 reg [`PE_COL-1:0] requant_valid;
@@ -154,6 +155,7 @@ always @(posedge CLK) begin
         selected_en_requant_reg <= 1'b0;
         selected_en_maxpool_reg <= 1'b0;
         selected_to_ctrl_reg <= 1'b0;
+        selected_shift_reg <= {BIT_SHIFT{1'b0}};
 
         requant_data <= {BIT_DATA{1'b0}};
         requant_valid <= {`PE_COL{1'b0}};
@@ -200,12 +202,13 @@ always @(posedge CLK) begin
         selected_en_requant_reg <= Read_En_Requant;
         selected_en_maxpool_reg <= Read_En_Maxpool;
         selected_to_ctrl_reg <= Read_To_Ctrl;
+        selected_shift_reg <= Max_Shift;
 
         requant_valid <= selected_valid_reg;
         requant_addr <= selected_addr_reg;
         requant_en_maxpool <= selected_en_maxpool_reg;
         requant_to_ctrl <= selected_to_ctrl_reg;
-        if (selected_en_requant_reg) requant_data <= Requant(selected_data_reg, Max_Shift);
+        if (selected_en_requant_reg) requant_data <= Requant(selected_data_reg, selected_shift_reg);
         else requant_data <= selected_data_reg;
 
         ctrl_valid_reg <= {`PE_COL{1'b0}};
