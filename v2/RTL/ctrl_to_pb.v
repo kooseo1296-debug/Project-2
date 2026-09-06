@@ -41,13 +41,10 @@ module ctrl_to_pb #(
 localparam integer BIAS_W = `PE_COL*BIT_DATA;
 
 /*
- * Request pipeline
+ * Request pipeline.
  *
- * Stage NB-1:
- *   PB request signals are sent to the Product Buffer.
- *
- * Stage NB:
- *   Metadata is aligned with the synchronous PB read output.
+ * Stage NB-1 sends the request to PB.
+ * Stage NB aligns the request metadata with the synchronous PB read result.
  */
 reg [`PE_COL*(NB+1)-1:0] pipe_Valid;
 reg [BIT_ADDR*(NB+1)-1:0] pipe_Addr;
@@ -55,8 +52,8 @@ reg [(NB+1)-1:0] pipe_En_Maxpool;
 reg [(NB+1)-1:0] pipe_En_Requant;
 
 /*
- * En_Tile and Bias do not need the additional PB read-delay stage.
- * ProductLoader internally delays both signals by one cycle.
+ * En_Tile and Bias stop at the PB-request stage.
+ * ProductLoader adds one internal cycle for PB read alignment.
  */
 reg [`PE_COL*NB-1:0] pipe_En_Tile;
 reg [BIAS_W*NB-1:0] pipe_Bias;
@@ -64,19 +61,33 @@ reg [BIAS_W*NB-1:0] pipe_Bias;
 /* Requantization shift register */
 reg [BIT_SHIFT-1:0] Max_Shift;
 
+/*
+ * PB bank-selection pipeline stage.
+ *
+ * This register separates:
+ *   PB BRAM -> bank select
+ * from:
+ *   variable shift -> rounding -> saturation
+ */
+reg [BIT_DATA-1:0] selected_data_reg;
+reg [`PE_COL-1:0] selected_valid_reg;
+reg [BIT_ADDR-1:0] selected_addr_reg;
+reg selected_en_requant_reg;
+reg selected_en_maxpool_reg;
+
 /* Requantization output registers */
 reg [BIT_DATA-1:0] requant_data;
 reg [`PE_COL-1:0] requant_valid;
 reg [BIT_ADDR-1:0] requant_addr;
 reg requant_en_maxpool;
 
-/* MaxPool state registers */
+/* MaxPool state */
 reg [BIT_DATA-1:0] pool_max;
 reg [`PE_COL-1:0] pool_valid;
 reg [BIT_ADDR-1:0] pool_addr;
 reg [1:0] pool_count;
 
-/* Final output registers */
+/* Final Ctrl output registers */
 reg [BIT_DATA-1:0] ctrl_data_reg;
 reg [`PE_COL-1:0] ctrl_valid_reg;
 reg [BIT_ADDR-1:0] ctrl_addr_reg;
@@ -90,27 +101,25 @@ wire Read_En_Requant;
 /* Selected PB read data */
 wire [BIT_DATA-1:0] Selected_PB_Data;
 
-/* Shift value used by the requantization logic */
-wire [BIT_SHIFT-1:0] Shift_Use;
-
 integer i;
 
 
 /*
  * Select one PB bank.
  *
- * In_Valid is assumed to be one-hot-or-zero, so only one PB bank
- * is selected at a time.
+ * Read_Valid is guaranteed to be one-hot-or-zero.
+ * A masked OR is used instead of a priority selection.
  */
-function [BIT_DATA-1:0] select_pb_data;
-    input [`PE_COL*BIT_DATA-1:0] data;
-    input [`PE_COL-1:0] valid;
+function [BIT_DATA-1:0] Select_PB_Data;
+    input [`PE_COL*BIT_DATA-1:0] Data;
+    input [`PE_COL-1:0] Valid;
     integer k;
     begin
-        select_pb_data = {BIT_DATA{1'b0}};
+        Select_PB_Data = {BIT_DATA{1'b0}};
         for (k=0; k<`PE_COL; k=k+1)
-            if (valid[k])
-                select_pb_data = data[k*BIT_DATA +: BIT_DATA];
+            Select_PB_Data =
+                Select_PB_Data |
+                (Data[k*BIT_DATA +: BIT_DATA] & {BIT_DATA{Valid[k]}});
     end
 endfunction
 
@@ -118,39 +127,38 @@ endfunction
 /*
  * Requantization for non-negative post-ReLU data.
  *
- * Operation:
- *   1. Right shift
- *   2. Add the rounding bit
- *   3. Saturate to the signed INT8 positive maximum, 127
+ *   shifted = value >> shift
+ *   rounded = shifted + rounding_bit
+ *   output  = min(rounded, 127)
  */
-function [BIT_DATA-1:0] requant;
-    input [BIT_DATA-1:0] value;
-    input [BIT_SHIFT-1:0] shift;
+function [BIT_DATA-1:0] Requant;
+    input [BIT_DATA-1:0] Value;
+    input [BIT_SHIFT-1:0] Shift;
 
     reg [BIT_DATA-1:0] shifted;
     reg round_bit;
     reg [BIT_DATA:0] rounded;
 
     begin
-        if (value[BIT_DATA-1]) begin
-            requant = {BIT_DATA{1'b0}};
+        if (Value[BIT_DATA-1]) begin
+            Requant = {BIT_DATA{1'b0}};
         end
         else begin
-            if (shift == 0) begin
-                shifted = value;
+            if (Shift == 0) begin
+                shifted = Value;
                 round_bit = 1'b0;
             end
             else begin
-                shifted = value >> shift;
-                round_bit = value[shift-1];
+                shifted = Value >> Shift;
+                round_bit = Value[Shift-1];
             end
 
             rounded = {1'b0, shifted} + round_bit;
 
             if (rounded > 127)
-                requant = 127;
+                Requant = 127;
             else
-                requant = rounded[BIT_DATA-1:0];
+                Requant = rounded[BIT_DATA-1:0];
         end
     end
 endfunction
@@ -160,7 +168,7 @@ endfunction
 assign PB_Valid_Out = pipe_Valid[`PE_COL*(NB-1) +: `PE_COL];
 assign PB_Addr_Out = pipe_Addr[BIT_ADDR*(NB-1) +: BIT_ADDR];
 
-/* ProductLoader control outputs */
+/* ProductLoader outputs */
 assign En_Tile_Out = pipe_En_Tile[`PE_COL*(NB-1) +: `PE_COL];
 assign Bias_Out = pipe_Bias[BIAS_W*(NB-1) +: BIAS_W];
 
@@ -170,17 +178,9 @@ assign Read_Addr = pipe_Addr[BIT_ADDR*NB +: BIT_ADDR];
 assign Read_En_Maxpool = pipe_En_Maxpool[NB];
 assign Read_En_Requant = pipe_En_Requant[NB];
 
-/* Select the data from the active PB bank */
-assign Selected_PB_Data = select_pb_data(PB_Data_In, Read_Valid);
+assign Selected_PB_Data = Select_PB_Data(PB_Data_In, Read_Valid);
 
-/*
- * If biggest produces a new shift in the same cycle that the
- * requantization logic consumes data, use the new shift immediately.
- */
-assign Shift_Use =
-    In_biggest_Valid ? In_biggest_Max_Shift : Max_Shift;
-
-/* Final outputs to Ctrl */
+/* Final outputs */
 assign ctrl_Valid_Out = ctrl_valid_reg;
 assign ctrl_Addr_Out = ctrl_addr_reg;
 assign Data_Out = ctrl_data_reg;
@@ -198,6 +198,12 @@ always @(posedge CLK) begin
 
         Max_Shift <= {BIT_SHIFT{1'b0}};
 
+        selected_data_reg <= {BIT_DATA{1'b0}};
+        selected_valid_reg <= {`PE_COL{1'b0}};
+        selected_addr_reg <= {BIT_ADDR{1'b0}};
+        selected_en_requant_reg <= 1'b0;
+        selected_en_maxpool_reg <= 1'b0;
+
         requant_data <= {BIT_DATA{1'b0}};
         requant_valid <= {`PE_COL{1'b0}};
         requant_addr <= {BIT_ADDR{1'b0}};
@@ -213,10 +219,8 @@ always @(posedge CLK) begin
         ctrl_addr_reg <= {BIT_ADDR{1'b0}};
     end
     else begin
-
         /*
-         * Update the requantization shift only when biggest produces
-         * a new valid shift value.
+         * Capture a new layer requantization shift.
          */
         if (In_biggest_Valid)
             Max_Shift <= In_biggest_Max_Shift;
@@ -251,31 +255,38 @@ always @(posedge CLK) begin
         end
 
         /*
-         * PB read -> Requantization
-         *
-         * Read_Valid, Read_Addr and the enable signals are aligned
-         * with PB_Data_In after the one-cycle synchronous PB read delay.
+         * Stage 1 of the PB-to-Ctrl path:
+         * register the selected PB bank and all associated metadata.
          */
-        requant_valid <= Read_Valid;
-        requant_addr <= Read_Addr;
-        requant_en_maxpool <= Read_En_Maxpool;
-
-        if (Read_En_Requant)
-            requant_data <= requant(Selected_PB_Data, Shift_Use);
-        else
-            requant_data <= Selected_PB_Data;
+        selected_data_reg <= Selected_PB_Data;
+        selected_valid_reg <= Read_Valid;
+        selected_addr_reg <= Read_Addr;
+        selected_en_requant_reg <= Read_En_Requant;
+        selected_en_maxpool_reg <= Read_En_Maxpool;
 
         /*
-         * Requantization -> optional MaxPool
+         * Stage 2 of the PB-to-Ctrl path:
+         * perform requantization after the bank-selection register.
+         */
+        requant_valid <= selected_valid_reg;
+        requant_addr <= selected_addr_reg;
+        requant_en_maxpool <= selected_en_maxpool_reg;
+
+        if (selected_en_requant_reg)
+            requant_data <= Requant(selected_data_reg, Max_Shift);
+        else
+            requant_data <= selected_data_reg;
+
+        /*
+         * Stage 3 of the PB-to-Ctrl path:
+         * optional MaxPool and final Ctrl output register.
          *
          * MaxPool disabled:
-         *   One valid input produces one valid output.
+         *   one valid input produces one valid output.
          *
          * MaxPool enabled:
-         *   Four valid inputs are reduced to one maximum value.
-         *   ctrl_Valid_Out remains low for the first three inputs
-         *   and is asserted only when the fourth input completes
-         *   the pool operation.
+         *   four valid inputs produce one maximum value.
+         *   ctrl_Valid_Out is asserted only for the fourth input.
          */
         ctrl_valid_reg <= {`PE_COL{1'b0}};
 
@@ -285,8 +296,10 @@ always @(posedge CLK) begin
                 ctrl_addr_reg <= requant_addr;
                 ctrl_valid_reg <= requant_valid;
 
-                pool_count <= 2'd0;
                 pool_max <= {BIT_DATA{1'b0}};
+                pool_valid <= {`PE_COL{1'b0}};
+                pool_addr <= {BIT_ADDR{1'b0}};
+                pool_count <= 2'd0;
             end
             else begin
                 case (pool_count)
@@ -320,8 +333,10 @@ always @(posedge CLK) begin
                         ctrl_addr_reg <= pool_addr;
                         ctrl_valid_reg <= pool_valid;
 
-                        pool_count <= 2'd0;
                         pool_max <= {BIT_DATA{1'b0}};
+                        pool_valid <= {`PE_COL{1'b0}};
+                        pool_addr <= {BIT_ADDR{1'b0}};
+                        pool_count <= 2'd0;
                     end
                 endcase
             end
