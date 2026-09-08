@@ -222,7 +222,7 @@ conclusions about the energy benefit of architectural modifications.
 
 # 5. Baseline Resource Utilization
 
-<img width="825" height="601" alt="image" src="https://github.com/user-attachments/assets/657a20e3-e344-417e-80f5-4834423ca4b9" />
+<img alt="image" src="https://github.com/user-attachments/assets/657a20e3-e344-417e-80f5-4834423ca4b9" />
 
 The implemented baseline uses:
 
@@ -373,7 +373,7 @@ Original preprocessing
 Shift-based requantization
 ```
 
-<img width="1038" height="625" alt="image" src="https://github.com/user-attachments/assets/8f2a7ee7-28c6-412b-b7f0-73d20f77db0e" />
+<img alt="image" src="https://github.com/user-attachments/assets/8f2a7ee7-28c6-412b-b7f0-73d20f77db0e" />
 
 ---
 
@@ -816,7 +816,7 @@ than an independent scale for each output channel.
 
 # 15. V2 Timing Result
 
-> Insert the V2 post-implementation timing screenshot here.
+<img alt="image" src="https://github.com/user-attachments/assets/14788319-fe92-47d6-89bb-02b181682861" />
 
 V2 was implemented with the same 8.0 ns clock-period target used for V1.
 
@@ -851,7 +851,7 @@ combinational-logic problem.
 
 # 16. V2 Resource Utilization
 
-> Insert the V2 utilization screenshot here.
+<img alt="image" src="https://github.com/user-attachments/assets/05e20a8f-ac88-46e4-b82d-57993def827b" />
 
 | Resource | V1 | V2 | Change |
 |---|---:|---:|---:|
@@ -873,7 +873,7 @@ expanding the major on-chip memory footprint.
 
 # 17. V2 Power and Estimated Energy per Image
 
-> Insert the V2 Vivado power screenshot here.
+<img alt="image" src="https://github.com/user-attachments/assets/17b75ce2-5064-4322-9889-a1756ffd534b" />
 
 Vivado reports:
 
@@ -912,7 +912,7 @@ execution time reduces estimated energy per image by approximately **98.48%**.
 
 # 18. V2 Full-Dataset Vitis Result
 
-> Insert the V2 Vitis serial-monitor screenshot here.
+<img alt="image" src="https://github.com/user-attachments/assets/660f1f2e-04ff-4839-8e09-85d3c13e0a57" />
 
 The completed V2 RTL/Vitis flow was evaluated over the same 1,000-image
 CIFAR-10 subset.
