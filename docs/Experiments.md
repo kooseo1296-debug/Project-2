@@ -3,7 +3,7 @@
 This document records the experimental validation and design-space
 exploration performed during the development of Project 2.
 
-The experiments are divided into two stages:
+The experiments are divided into three stages:
 
 1. **V1 baseline characterization**
    - FPGA implementation and timing analysis
@@ -11,19 +11,29 @@ The experiments are divided into two stages:
    - full-dataset inference validation using Vitis
 
 2. **V2 numerical design exploration**
-   - hardware-friendly requantization
+   - hardware-friendly requantization and GAP
    - hardware-friendly input preprocessing
+   - bias-domain handling
    - accuracy evaluation before RTL integration
 
-The purpose of the second stage is to evaluate numerical modifications
-in software before committing them to the V2 RTL architecture.
+3. **V2 RTL and system validation**
+   - end-to-end PL inference
+   - timing and resource analysis
+   - full-dataset Vitis validation
+   - PS–PL communication reduction
+   - latency and estimated energy comparison against V1
+
+The numerical exploration was performed first so that arithmetic changes
+could be rejected or accepted before the corresponding V2 RTL was finalized.
+The accepted configuration was then implemented and evaluated as the V2 engine.
 
 ---
 
 # 1. Experimental Environment
 
-All experiments use the same PYNQ-Z2 platform and baseline NPU
-architecture.
+All experiments use the same PYNQ-Z2 system-level platform, toolchain,
+AXI4-Lite interface, and 9 × 16 compute-array organization. V1 and V2 differ
+in the execution structure implemented inside the custom NPU IP.
 
 | Item | Configuration |
 |---|---|
@@ -47,46 +57,40 @@ NPU engine rather than changes to the surrounding FPGA platform.
 
 # 2. Experimental Workflow
 
-V1 was first implemented and validated as the reference platform.
-
-Before implementing the complete V2 architecture in RTL, candidate
-numerical modifications were evaluated using the existing V1
-hardware and the Vitis inference application.
-
-The experimental workflow is therefore:
+V1 was first implemented and measured as the reference engine. Candidate
+V2 arithmetic changes were then evaluated in the Vitis inference model before
+being committed to RTL. Finally, the accepted arithmetic and end-to-end PL
+execution structure were implemented as V2 and measured on the same board.
 
 ```mermaid
 flowchart TD
+    A[V1 Baseline RTL] --> B[Vivado Implementation]
+    B --> C[V1 Timing / Resource / Power]
+    B --> D[Vitis 1000-image Baseline]
+    D --> E[91.9% / 338.03 ms per image]
 
-    A[V1 RTL Baseline] --> B[Vivado Implementation]
+    E --> F[Shift-based GAP + Requantization]
+    F --> G[91.5%: Accept]
+    G --> H[Simplified Normalization]
+    H --> I[10.9%: Reject]
+    G --> J[Bias-domain Experiment]
+    J --> K[Initial Bias Preload + HW Rescale: 10.3% Reject]
+    J --> L[Per-image Scaled Q32 Bias: 91.5% Accept]
 
-    B --> C[Timing Analysis]
-    B --> D[Resource / Power Characterization]
-    B --> E[Export Hardware Platform]
-
-    E --> F[Vitis Full-Dataset Inference]
-
-    F --> G[Baseline<br/>919 / 1000]
-
-    G --> H[Modify Requantization<br/>in Vitis Inference Model]
-    H --> I[Shift-Based Requantization<br/>915 / 1000]
-
-    I --> J[Modify Input Preprocessing]
-    J --> K[Simplified Preprocessing<br/>109 / 1000]
-
-    I --> L[Adopt for V2]
-    K --> M[Reject for V2]
-
-    L --> N[V2 RTL Development]
-    M --> N
+    K --> M[V2 RTL Integration]
+    L --> M
+    I --> M
+    M --> N[V2 Vivado + Vitis Validation]
+    N --> O[91.5% / 5.004 ms per image]
+    O --> P[V2 Live Demo]
+    P --> Q[V3 Activation Row-Level ZeroSkip]
 ```
 
-This workflow separates **numerical validation** from **RTL
-implementation**.
+This sequence separates three questions:
 
-A modification is first evaluated using the same FPGA accelerator and
-dataset. Only modifications that maintain acceptable model accuracy
-are selected for implementation in V2.
+1. does the numerical approximation preserve accuracy?
+2. can the accepted operation be mapped to a hardware-friendly datapath?
+3. after RTL integration, how much end-to-end latency and communication are actually reduced?
 
 ---
 
@@ -308,7 +312,7 @@ $s = \frac{2\cdot \max(|x|)}{255}$
 
 and the quantized activation is obtained from:
 
-$q \approx \frac{x}{s}$
+`q ≈ x / s`
 
 with the result represented in the target signed 8-bit domain.
 
@@ -410,11 +414,11 @@ represented within the target 8-bit range.
 
 Instead of:
 
-$q \approx \frac{x}{s}$
+`q ≈ x / s`
 
 using an arbitrary $s$, V2 uses:
 
-$q \approx \{round}\left(\frac{x}{2^n}\right)$
+`q = round(x / 2^n)`
 
 which can be implemented as:
 
@@ -529,7 +533,7 @@ A simplified preprocessing scheme was therefore evaluated.
 The channel mean was approximated using the 1024 pixels of each
 32 × 32 input channel:
 
-$\mu_{int} \approx \{round} \left(\frac{\sum_{i=0}^{1023}x_i}{1024} \right)$
+`mu_int = round(sum(x[0:1024]) / 1024)`
 
 Since:
 
@@ -539,21 +543,21 @@ the division can be implemented using a right shift.
 
 The evaluated integer approximation was conceptually:
 
-$\mu_{int} = (\text{sum} \gg 10) + \text{rounding bit}$
+`mu_int = (sum >> 10) + rounding_bit`
 
 followed by:
 
-$x' = clip_{[-128,127]}(x - \mu_{int})$
+`x' = clip(x - mu_int, -128, 127)`
 
 The standard-deviation division was removed.
 
 Therefore, the preprocessing changed from:
 
-$\boxed{x_{norm,c} = \frac{x_{c}-\mu_{c}}{\sigma_{c}}}$
+`x_norm,c = (x_c - mu_c) / sigma_c`
 
 to approximately:
 
-$\boxed{x'_{c} = clip(x _{c} - \mu _{int,c})}$
+`x'_c = clip(x_c - mu_int,c)`
 
 This eliminates the standard-deviation scaling and replaces the mean
 calculation with shift-based integer arithmetic.
@@ -639,40 +643,349 @@ are integrated into the RTL architecture.
 
 ---
 
-# 11. Summary of Current Results
+# 11. Numerical-Exploration Decision
 
-## FPGA Baseline
+The software-side exploration established the arithmetic configuration that was
+carried into V2 RTL.
 
-| Metric | Result |
-|---|---:|
-| Target Frequency | 125 MHz |
-| Timing | Met |
-| Worst reported slack | +0.041 ns |
-| LUT | 3,060 |
-| FF | 6,175 |
-| BRAM | 116.5 / 140 (83.21%) |
-| DSP | 144 / 220 (65.45%) |
-| Estimated On-Chip Power | 1.675 W |
+| Candidate | Accuracy | Decision |
+|---|---:|---|
+| V1 reference arithmetic | 91.9% | Baseline |
+| Original normalization + shift-based GAP/requantization | 91.5% | Accept |
+| Simplified normalization + shift-based GAP/requantization | 10.9% | Reject |
+| Initial INT32 bias preload + runtime hardware rescaling | 10.3% | Reject |
+| Per-image activation-scale-dependent Q32 bias load | 91.5% | Accept |
 
-## Numerical Exploration
-
-| Version | Preprocessing | Requantization | Accuracy | Decision |
-|---|---|---|---:|---|
-| V1 | Original | Original | 91.9% | Baseline |
-| V2 candidate A | Original | Shift-based | 91.5% | Adopt |
-| V2 candidate B | Simplified | Shift-based | 10.9% | Reject |
-
-The experiments establish the numerical configuration to be used for
-V2:
+The resulting V2 numerical policy is therefore:
 
 ```text
-Original PS preprocessing
-          ↓
-End-to-end PL inference
-          +
-Shift-based requantization
+PS: original CIFAR-10 normalization and input quantization
+                 │
+                 ▼
+PL: INT8 weighted layers
+    + scaled bias
+    + ReLU
+    + shift-based requantization
+    + maxpool / GAP
+    + FC layers
 ```
 
-The next development stage is to implement this configuration in the
-V2 RTL and evaluate its timing, cycle count, latency, and hardware
-overhead relative to the V1 baseline.
+---
+
+# 12. V2 Bias-Domain Experiment
+
+Bias handling became a separate design issue because the integer bias presented
+to an accumulator depends on the activation scale as well as the fixed weight
+scale.
+
+Conceptually, for activation scale `s_x` and weight scale `s_w`:
+
+```text
+bias_acc = round(bias_real / (s_x * s_w))
+```
+
+The activation scale changes with each input image and continues to evolve after
+layer requantization. Two approaches were therefore evaluated.
+
+## 12.1 Initial Bias Preload + Runtime Hardware Rescaling
+
+The first attempt preloaded one INT32 bias representation and attempted to
+rescale it in hardware as activation scale information changed.
+
+```text
+Accuracy : 103 / 1000
+         : 10.3%
+```
+
+This result was rejected because it did not reproduce the verified reference
+numerics.
+
+## 12.2 Per-Image Scaled Q32 Bias Load
+
+The accepted approach prepares the bias values in the PS using the current
+activation scale and sends the resulting Q32 values before inference.
+
+The eight weighted layers contain a total of:
+
+```text
+Conv1 :  32
+Conv2 :  32
+Conv3 :  64
+Conv4 :  64
+Conv5 :  96
+Conv6 :  96
+FC1   : 128
+FC2   :  10
+----------------
+Total : 522 biases
+```
+
+This adds **522 parameter payload transfers per image**, but restores the
+expected V2 accuracy:
+
+```text
+Accuracy : 915 / 1000
+         : 91.5%
+```
+
+The 522-transfer overhead is small compared with the baseline's repeated
+intermediate activation upload and Product Buffer readback.
+
+---
+
+# 13. PS–PL Communication Analysis
+
+The dominant software-visible data payload count was measured from the inference
+flow. This count is used as an architectural communication metric; it is not a
+count of every low-level AXI channel handshake signal.
+
+## 13.1 V1 Baseline
+
+The PS performs im2col and repeatedly loads matrix-multiplication inputs, then
+reads products back from the PL.
+
+```text
+Activation / im2col LOAD payloads : 637,920 / image
+Product READ payloads             : 110,730 / image
+--------------------------------------------------
+Total                              : 748,650 / image
+```
+
+## 13.2 V2 End-to-End Engine
+
+After the one-time model preload, the dominant per-image payloads are:
+
+```text
+Scaled bias parameters :   522
+RGB activation         : 3,072
+Final logits           :    10
+------------------------------
+Total                  : 3,604 / image
+```
+
+Therefore:
+
+```text
+V2 / V1 payload count = 3,604 / 748,650
+                      ≈ 0.004814
+```
+
+or a reduction of approximately **99.52%** in this payload-count metric.
+
+This communication reduction is the central architectural reason for V2. The
+matrix-multiplication datapath remains similar, but intermediate feature maps no
+longer return to the PS after every layer.
+
+---
+
+# 14. V2 RTL Datapath Integration
+
+V2 extends the baseline MatMul engine with local post-processing and
+network-level control while preserving the 9 × 16 systolic array.
+
+The main added responsibilities are:
+
+| Module / Path | V2 Function |
+|---|---|
+| `Ctrl` | layer sequencing, convolution/GAP/maxpool control, bias-related control |
+| `sa_to_pb` | ReLU and candidate requantization-shift tracking |
+| `Biggest` | reduction of shift candidates to the layer-wide maximum shift |
+| `ctrl_to_pb` | shift-based requantization, maxpool, bias transport toward Product Loader |
+| Product Loader / PB feedback | partial-sum and intermediate-feature reuse inside PL |
+
+```mermaid
+flowchart LR
+    SA[9 x 16 Systolic Array] --> SP[sa_to_pb
+ReLU + shift candidate]
+    SP --> BG[Biggest
+layer-wide max shift]
+    SP --> CP[ctrl_to_pb]
+    BG --> CP
+    CP -->|requant / pool| PB[Product Buffer]
+    PB --> PL[Product Loader]
+    PL --> SA
+    C[Controller] --> CP
+    C --> PL
+```
+
+The maximum shift is retained across all output-channel tiles belonging to the
+same layer. Requantization therefore uses one layer/tensor-wide shift rather
+than an independent scale for each output channel.
+
+---
+
+# 15. V2 Timing Result
+
+> Insert the V2 post-implementation timing screenshot here.
+
+V2 was implemented with the same 8.0 ns clock-period target used for V1.
+
+```text
+Target period : 8.000 ns
+Target clock  : 125 MHz
+Top slack     : +0.119 ns
+Total delay   : 7.142 ns
+Logic delay   : 0.518 ns
+Net delay     : 6.624 ns
+High fanout   : 64
+```
+
+Thus, V2 also meets the **125 MHz** target.
+
+The critical-path character changes compared with V1. The V1 top path was
+associated with central controller/address-enable distribution. In V2, the top
+reported setup path is dominated by a high-fanout routed connection from a
+pipeline register toward BRAM data input.
+
+Approximately:
+
+```text
+6.624 / 7.142 ≈ 92.7%
+```
+
+of the top-path delay is routing delay. This means the final V2 timing limit is
+primarily a placement/routing and fanout problem rather than a deep
+combinational-logic problem.
+
+---
+
+# 16. V2 Resource Utilization
+
+> Insert the V2 utilization screenshot here.
+
+| Resource | V1 | V2 | Change |
+|---|---:|---:|---:|
+| LUT | 3,060 | 4,477 | +46.31% |
+| LUTRAM | 560 | 1,042 | +86.07% |
+| FF | 6,175 | 7,649 | +23.87% |
+| BRAM | 116.5 | 116.5 | 0% |
+| DSP | 144 | 144 | 0% |
+
+V2 adds control, post-processing, and intermediate-data-management logic, so the
+LUT/LUTRAM/FF cost increases. In contrast, the main compute array remains fixed:
+144 DSPs are still used by the 144 PEs, and BRAM usage remains 116.5 blocks.
+
+The unchanged BRAM result is important because V1 already consumes 83.21% of
+the available BRAM. V2 therefore achieves end-to-end PL execution without
+expanding the major on-chip memory footprint.
+
+---
+
+# 17. V2 Power and Estimated Energy per Image
+
+> Insert the V2 Vivado power screenshot here.
+
+Vivado reports:
+
+```text
+Total On-Chip Power : 1.715 W
+Dynamic Power       : 1.562 W
+Static Power        : 0.153 W
+```
+
+The dynamic breakdown remains dominated by PS7:
+
+| Component | V2 Power |
+|---|---:|
+| PS7 | 1.256 W |
+| DSP | 0.165 W |
+| Clocks | 0.051 W |
+| Signals | 0.058 W |
+| Logic | 0.019 W |
+| BRAM | 0.013 W |
+
+As with V1, this is a **system-level Vivado estimate**, not an isolated NPU
+power measurement. The report confidence remains Medium.
+
+The estimated energy per image is obtained by multiplying the reported total
+on-chip power by measured end-to-end inference time:
+
+```text
+V1 : 1.675 W × 0.33803 s ≈ 566.199 mJ / image
+V2 : 1.715 W × 0.005004 s ≈   8.582 mJ / image
+```
+
+Although the total estimated on-chip power rises slightly, the much shorter
+execution time reduces estimated energy per image by approximately **98.48%**.
+
+---
+
+# 18. V2 Full-Dataset Vitis Result
+
+> Insert the V2 Vitis serial-monitor screenshot here.
+
+The completed V2 RTL/Vitis flow was evaluated over the same 1,000-image
+CIFAR-10 subset.
+
+```text
+Accuracy            : 915 / 1000 = 91.50%
+
+End-to-end V2
+Inference total     : 5004.700 ms
+Average / image     :    5.004 ms
+
+PS preprocessing
+Preprocess total    : 1033.492 ms
+Average / image     :    1.033 ms
+
+Parameter/input staging + PL inference + logits
+Path total          : 3971.207 ms
+Average / image     :    3.971 ms
+
+Startup
+Model preload       :   62.600 ms
+Cold-start total    : 5067.301 ms
+```
+
+The one-time model preload is excluded from the steady-state per-image inference
+number and is reported separately as cold-start overhead.
+
+At 5.004 ms per image, the measured benchmark throughput is approximately:
+
+```text
+1000 / 5.004 ≈ 199.84 images/s
+```
+
+This is well above the **30 FPS compute-latency target**. A complete live-camera
+FPS figure still depends on camera capture, resize/crop, display, and other demo
+overheads and should therefore be measured separately.
+
+---
+
+# 19. V1 vs. V2 Summary
+
+| Metric | V1 Baseline | V2 End-to-End | Change |
+|---|---:|---:|---:|
+| Accuracy | 91.9% | 91.5% | -0.4 percentage points |
+| Target clock | 125 MHz | 125 MHz | same |
+| Worst reported slack | +0.041 ns | +0.119 ns | both meet timing |
+| Time / image | 338.03 ms | 5.004 ms | -98.52% |
+| Speedup | 1.00× | **67.55×** | — |
+| Payload transfers / image | 748,650 | 3,604 | -99.52% |
+| LUT | 3,060 | 4,477 | +46.31% |
+| LUTRAM | 560 | 1,042 | +86.07% |
+| FF | 6,175 | 7,649 | +23.87% |
+| BRAM | 116.5 | 116.5 | 0% |
+| DSP | 144 | 144 | 0% |
+| Estimated on-chip power | 1.675 W | 1.715 W | +2.39% |
+| Estimated energy / image | 566.199 mJ | 8.582 mJ | -98.48% |
+
+The key V1→V2 trade-off is therefore clear: V2 spends additional logic resources
+to keep layer scheduling and intermediate processing inside the PL, while
+substantially reducing PS–PL communication and end-to-end latency.
+
+---
+
+# 20. Current Next Steps
+
+The V2 architecture is now implemented and validated. The remaining Project 2
+steps are:
+
+1. integrate the V2 Vitis application into the live-demo environment and record a demo video;
+2. measure complete camera-to-result FPS separately from the 1,000-image benchmark;
+3. implement **V3 activation row-level ZeroSkip** on top of the V2 architecture;
+4. compare V2 and V3 under the same timing, resource, accuracy, latency, power, and energy methodology.
+
+The exact V3 row-skipping schedule and detection granularity should be documented
+after the RTL interface is finalized rather than inferred from the earlier
+column-level draft.

@@ -366,131 +366,260 @@ Reading RCODE must not modify accelerator state.
 
 ---
 
-# 4. V2 — End-to-End PL Inference (Planned)
+---
 
-> **Note:** The V2 command format is still subject to change while the final Activation Buffer organization is being determined.
+# 4. V2 - End-to-End PL Inference
 
-V2 moves CNN scheduling from the PS into the PL.
+V2 keeps the same 32-bit AXI4-Lite slave connection but changes the
+software-visible execution model.
 
-The intended PS responsibilities are reduced to:
+The PS no longer configures every individual MatMul operation or reads the
+Product Buffer between CNN layers. Instead, the PS stages the per-image
+parameters/input, starts the V2 engine, and reads the final FC2 logits.
 
-- loading weights,
-- loading the input image,
-- issuing an execution command,
-- reading the final inference result.
+The implemented workflow reported for V2 is:
 
-Intermediate MatMul configuration and Product Buffer readback are removed from the normal software-visible inference flow.
+```text
+Startup:
+    preload weights
 
-## Planned Address Map
+Per image:
+    prepare / load 522 scaled bias values
+    load 3 x 32 x 32 RGB activation values
+    start end-to-end PL inference
+    wait for DONE
+    read 10 logits
+```
 
-| Offset | Operation | Direction | Description |
+Intermediate feature-map transfers are removed from the normal V2 inference
+path.
+
+## V2 Semantic Address Map
+
+| Offset | Operation | Direction | V2 role |
 |---:|---|---|---|
-| `0x00` | Read Result | PL → PS | Read CNN status and final inference result |
-| `0x04` | Load Weight | PS → PL | Load weight data |
-| `0x08` | Load Input | PS → PL | Load RGB input data |
-| `0x0C` | Execute | PS → PL | Start end-to-end CNN inference |
+| `0x00` | RCODE / Result | PL -> PS | status and final logit readback |
+| `0x04` | Load Weight | PS -> PL | model-static INT8 weight preload |
+| `0x08` | Load Activation | PS -> PL | preprocessed RGB INT8 input upload |
+| `0x0C` | Parameter / Control | PS -> PL | V2 bias/control path and execution control |
+
+`0x10` Product Buffer readback is a Baseline operation and is not part of the
+normal V2 layer-by-layer inference flow.
 
 ---
 
-## `0x00` — Read Result
+## `0x00` - V2 RCODE / Logit Readback
 
-**Direction:** PL → PS
+The V2 result path uses the status bits plus a class/logit payload.
 
-Planned format:
+The implemented V2 software convention is:
 
 ```verilog
-{BUSY, DONE, 4'b_Class, 26'b_Value}
+{BUSY, DONE, Class[3:0], Logit[25:0]}
 ```
-
-### Bit Field
 
 ```text
 31      30 29        26 25                           0
 +-------+--+------------+-----------------------------+
-| BUSY  |DONE|  Class    |            Value            |
+| BUSY  |DONE|  Class    |            Logit            |
 | 1 bit |1bit|  4 bits   |           26 bits           |
 +-------+--+------------+-----------------------------+
 ```
 
 | Field | Width | Description |
 |---|---:|---|
-| `BUSY` | 1 bit | CNN inference is active |
-| `DONE` | 1 bit | CNN inference has completed |
-| `Class` | 4 bits | Predicted CIFAR-10 class |
-| `Value` | 26 bits | Output value associated with the prediction |
+| `BUSY` | 1 bit | V2 inference/control path is active |
+| `DONE` | 1 bit | end-to-end CNN inference has completed |
+| `Class` | 4 bits | CIFAR-10 logit/class index |
+| `Logit` | 26 bits | signed logit payload |
+
+The Vitis application waits for `DONE` and then consumes the 10 FC2 logits.
+The final class is obtained from the maximum logit.
 
 ---
 
-## `0x04` — Load Weight
+## `0x04` - V2 Weight Preload
 
-**Direction:** PS → PL
+Weights remain model-static and are loaded once during startup.
 
-Planned format:
+V2 reuses the same logical write packing as the Baseline weight path:
 
 ```verilog
-{20'b_WBaddress, 4'b_colnum, 8'b_Data}
+{16'b_WBaddress, 8'b_colnum, 8'b_Data}
 ```
 
-| Field | Width | Description |
-|---|---:|---|
-| `WBaddress` | 20 bits | Weight Buffer address |
-| `colnum` | 4 bits | Target column |
-| `Data` | 8 bits | INT8 weight value |
+The 9 x 16 tiled packing and Weight Buffer layout are described in
+[`tiling_logic.md`](tiling_logic.md).
+
+Weight preload time is kept separate from the per-image inference timing.
 
 ---
 
-## `0x08` — Load Input
+## `0x08` - V2 RGB Activation Upload
 
-**Direction:** PS → PL
-
-Planned format:
-
-```verilog
-{20'b_ABaddress, 4'b_RGB, 8'b_Data}
-```
-
-| Field | Width | Description |
-|---|---:|---|
-| `ABaddress` | 20 bits | Activation Buffer address |
-| `RGB` | 4 bits | RGB channel identifier |
-| `Data` | 8 bits | INT8 input value |
-
-For a CIFAR-10 image:
+The PS performs the original CIFAR-10 normalization and INT8 input
+quantization, then uploads the complete image:
 
 ```text
-32 × 32 × 3
-= 1024 spatial positions × 3 channels
-= 3072 INT8 input values
+3 x 32 x 32 = 3072 INT8 values
 ```
 
-The final mapping of these 3072 values depends on the V2 Activation Buffer organization.
-
----
-
-## `0x0C` — Execute
-
-**Direction:** PS → PL
-
-A write to address `0x0C` triggers CNN execution.
-
-The write payload itself is ignored.
+The V2 activation write convention retains an address/channel/data form:
 
 ```verilog
-{32'bX}
+{16'b_ABaddress, 8'b_channel, 8'b_Data}
 ```
 
-The intended software-visible flow is:
+where the channel field identifies the RGB input stream used by the V2 input
+path.
 
-```text
-Load weights
-     ↓
-Load RGB input
-     ↓
-Write 0x0C
-     ↓
-End-to-end CNN inference in PL
-     ↓
-Read final result from 0x00
-```
+Unlike V1, the PS does not materialize and upload every later layer's im2col
+matrix. Those later activations remain inside the PL.
 
 ---
+
+## `0x0C` - V2 Scaled-Bias / Control Path
+
+Bias handling changed during V2 development.
+
+The accepted V2 implementation does **not** rely on the earlier draft in this
+document that described a simple execute-only `0x0C` register. The research
+report shows that the final verified flow prepares activation-scale-dependent
+bias values on the PS and transfers 522 scaled Q32 bias values for each image.
+
+The number 522 is the sum of all Conv/FC output-channel biases:
+
+```text
+Conv1 :  32
+Conv2 :  32
+Conv3 :  64
+Conv4 :  64
+Conv5 :  96
+Conv6 :  96
+FC1   : 128
+FC2   :  10
+----------------
+Total : 522
+```
+
+Conceptually, the bias must be represented in the current accumulator domain:
+
+```text
+bias_acc ~= bias_real / (activation_scale x weight_scale)
+```
+
+The Product Loader / partial-sum path then injects the selected bias into the
+corresponding accumulation inside the PL.
+
+### Important interface note
+
+The professor-report PDF records the **semantic behavior** and the final
+`522 writes/image` communication count, but it does not contain the final
+bit-level `0x0C` bias encoding. Therefore, the earlier planned half-write
+parameter encoding should not be treated as the final public register map.
+
+The exact field packing should be copied from the final checked-in RTL/Vitis
+helper when that source is frozen. This document intentionally avoids
+inventing a bitfield that is not supported by the report.
+
+---
+
+## V2 Start / Execute Behavior
+
+After the per-image bias and RGB input have been staged, the V2 control path
+starts the end-to-end inference sequence.
+
+Once started, the PL performs:
+
+```text
+Conv1
+ -> Conv2 -> MaxPool1
+ -> Conv3
+ -> Conv4 -> MaxPool2
+ -> Conv5
+ -> Conv6 -> MaxPool3
+ -> GAP
+ -> FC1
+ -> FC2
+```
+
+without normal PS intervention between layers.
+
+The PS polls the V2 status until completion and then reads the final logits.
+
+---
+
+# 5. Communication Reduction: V1 vs. V2
+
+The research report counts the dominant payload transfers as follows.
+
+## V1
+
+```text
+im2col activation LOAD : 637,920
+Product Buffer READ    : 110,730
+--------------------------------
+Total                  : 748,650 / image
+```
+
+## V2
+
+```text
+Scaled bias writes :  522
+RGB input writes   : 3072
+Final logit reads  :   10
+------------------------
+Total              : 3604 / image
+```
+
+Therefore:
+
+```text
+3604 / 748650 = 0.004814
+```
+
+V2 retains only about `0.4814%` of the Baseline payload-transfer count, a
+reduction of approximately `99.52%`.
+
+These counts are **payload-transfer counts used for the architectural
+comparison**. They do not include every AXI protocol handshake or every status
+poll performed by software.
+
+---
+
+# 6. V1 vs. V2 Software-Visible Flow
+
+```text
+V1
+
+PS
+ |-- load activation / im2col data
+ |-- configure S / IC
+ |-- configure OC / WOffset
+ |-- execute one MatMul
+ |-- poll DONE
+ |-- request PB data
+ |-- read PB data
+ |-- post-process / requantize
+ `-- repeat
+
+
+V2
+
+Startup:
+PS -- preload weights --> PL
+
+Per image:
+PS -- load scaled bias --> PL
+PS -- load RGB input --> PL
+PS -- start -----------> PL
+                         |
+                         | Conv1 ... FC2 internally
+                         v
+PS <-- 10 logits ------- PL
+```
+
+The main V2 benefit is therefore not a different AXI transport technology. It
+is the elimination of most software-visible layer transactions while keeping
+the same basic AXI4-Lite system integration.
+

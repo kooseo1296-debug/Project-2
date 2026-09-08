@@ -119,7 +119,7 @@ Only systolic-array columns `[4:0]` are treated as valid. The remaining columns 
 
 Tiles `W31`, `W32`, and `W33` contain only two valid K rows.
 
-No special arithmetic handling is required because the corresponding activation tile has already been zero-padded from width 2 to width 8. For the padded K positions therefore:
+No special arithmetic handling is required because the corresponding activation tile has already been zero-padded from width 2 to width 9. For the padded K positions therefore:
 
 $0 × W = 0$
 
@@ -409,3 +409,188 @@ P = [P1 P2 P3]
 resulting in:
 
 $P_{40 × 37}$
+
+
+---
+
+# 10. Relationship to the V2 End-to-End Engine
+
+The matrix mapping and 9 × 16 tiling rule described above are retained in V2.
+The major V1→V2 change is therefore **not** the physical GEMM tile geometry.
+Instead, the scheduling responsibility moves from the PS into the PL.
+
+```text
+V1
+PS prepares im2col / MatMul work
+        ↓
+PS loads activation tile
+        ↓
+PS configures S / IC / OC / offset
+        ↓
+PL executes tiled MatMul
+        ↓
+PS reads product
+        ↓
+PS prepares the next layer
+
+
+V2
+PS loads preprocessed RGB input
+        ↓
+PL controller selects the layer
+        ↓
+PL generates / schedules convolution data
+        ↓
+PL executes the same 9 × 16 tiled MatMul
+        ↓
+PL performs ReLU / pool / requantization
+        ↓
+Intermediate activation remains in PL
+        ↓
+PL schedules the next layer
+```
+
+Thus, the baseline tiling example remains useful for understanding the V2
+compute engine even though the surrounding dataflow is different.
+
+---
+
+## 10.1 Tile Traversal and Activation Reuse
+
+The implemented weight layout uses **K tile outer, output-channel tile inner**
+ordering.
+
+For the 40 × 20 by 20 × 37 example:
+
+```text
+A1 × W11
+A1 × W12
+A1 × W13
+
+A2 × W21
+A2 × W22
+A2 × W23
+
+A3 × W31
+A3 × W32
+A3 × W33
+```
+
+This ordering allows one activation K tile to be reused while the controller
+walks across multiple output-channel tiles.
+
+Conceptually:
+
+```text
+for each K tile:
+    hold / reuse current activation tile
+
+    for each OC tile:
+        load corresponding 9 × 16 weight tile
+        execute systolic-array operation
+        accumulate into the matching Product Buffer tile
+```
+
+For the first K tile, the partial-sum input is zero. For later K tiles, the
+previous Product Buffer value is fed back through the Product Loader.
+
+```text
+K tile 0 : P = A0 × W0
+K tile 1 : P = P + A1 × W1
+K tile 2 : P = P + A2 × W2
+...
+```
+
+---
+
+## 10.2 V2 Activation Buffer Capacity
+
+The Activation Buffer remains organized as 9 banks with a depth of 1024.
+
+The depth is intentionally not expanded to hold an entire multi-channel feature
+map. Instead, V2 relies on layer scheduling, channel/K tiling, and on-chip
+feedback.
+
+For the CIFAR-10 input:
+
+```text
+one spatial plane = 32 × 32 = 1024 values
+RGB image         = 3 × 1024 = 3072 values
+```
+
+The 1024-depth organization therefore matches the largest spatial plane while
+avoiding a first-layer-specific 3072-depth Activation Buffer.
+
+This decision is also consistent with the implemented resource results:
+
+```text
+V1 BRAM : 116.5 / 140
+V2 BRAM : 116.5 / 140
+```
+
+V2 adds end-to-end control and post-processing without increasing the main BRAM
+footprint.
+
+---
+
+## 10.3 Convolution Mapping in V2
+
+For each 3 × 3 convolution:
+
+```text
+K = Cin × 9
+```
+
+The physical systolic-array K width is still 9, so one 3 × 3 kernel plane maps
+naturally to one K tile for one input channel.
+
+Examples:
+
+```text
+Conv1 : Cin = 3  -> K =  27 ->   3 K tiles
+Conv2 : Cin = 32 -> K = 288 ->  32 K tiles
+Conv4 : Cin = 64 -> K = 576 ->  64 K tiles
+Conv6 : Cin = 96 -> K = 864 ->  96 K tiles
+```
+
+The difference from V1 is that V2 no longer requires the PS to materialize and
+repeatedly transfer the complete im2col matrix. The PL controller and local
+input-generation path provide the 3 × 3 activation vectors required by the same
+GEMM-style compute engine.
+
+Padding positions outside the feature-map boundary are treated as zero, matching
+the model's stride-1, padding-1 convolution definition.
+
+---
+
+# 11. V3 Extension — Activation Row-Level ZeroSkip
+
+The next engine extends V2 with **activation row-level ZeroSkip**.
+
+The intended principle is to avoid issuing a systolic-array computation when an
+activation row/group scheduled for the current operation is entirely zero.
+
+```text
+Scheduled activation row/group
+             │
+             ▼
+        Zero detection
+          /      \
+       zero     non-zero
+        │          │
+        ▼          ▼
+      SKIP       Execute
+                  9 × 16 SA
+```
+
+V3 is intentionally built on the same V2 tiling and memory organization so that
+its effect can be evaluated incrementally:
+
+```text
+V1 -> V2 : effect of end-to-end PL execution
+V2 -> V3 : additional effect of activation row-level ZeroSkip
+```
+
+The exact row-detection granularity, counter update rule, and partial-sum
+behavior should be documented after the V3 RTL scheduler is finalized. They are
+therefore not fixed in this document yet.

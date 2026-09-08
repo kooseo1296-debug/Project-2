@@ -1,18 +1,18 @@
-# Baseline Architecture
+# NPU Architecture
 
-This document describes the **Baseline (V1) architecture** of the FPGA
-MatMul accelerator used in this project.
+This document describes the architecture of the Project 2 FPGA NPU from the
+system level down to the internal tiled MatMul datapath.
 
-The Baseline is intentionally designed as a **PS-managed inference
-architecture**. The Processing System (PS) performs CNN-level data
-preparation, scheduling, and intermediate processing, while the
-Programmable Logic (PL) is primarily responsible for tiled matrix
-multiplication.
+Sections 1-14 document the **Baseline (V1)** architecture, where the
+Processing System (PS) manages CNN-level execution and the Programmable
+Logic (PL) primarily executes tiled matrix multiplication. The later
+sections document the implemented **V2 end-to-end PL extension**.
 
-The architecture is described from two levels:
+The architecture is described at three levels:
 
-1. the system-level PS–PL integration on the Zynq-7020;
-2. the internal architecture of the custom MatMul accelerator.
+1. system-level PS-PL integration on the Zynq-7020;
+2. the shared 9 x 16 tiled MatMul datapath;
+3. the V2 scheduling and post-processing logic added around the shared datapath.
 
 ---
 
@@ -361,7 +361,7 @@ processed in parallel.
 
 ---
 
-# 9. Input Loader and Timing Alignment
+# 9. Input Loader and Systolic Input Skewing
 
 The Activation Buffer is synchronous memory, so its read data does not
 arrive in the same cycle as the controller request.
@@ -369,8 +369,27 @@ arrive in the same cycle as the controller request.
 The Input Loader delays and aligns the activation data before it enters
 the systolic array.
 
-Additional row-dependent timing alignment is used so that the
-activation wavefront reaches the correct PE at the correct clock cycle.
+The row-dependent delay is a form of **systolic input skewing**. Different
+array rows receive incrementally staggered activation streams so that the
+required systolic wavefront is formed. The exact absolute latency includes
+the common BRAM/pipeline delay; the important point is the relative
+row-dependent skew between activation streams.
+
+Conceptually:
+
+```text
+Common BRAM / pipeline latency
+          |
+          v
+Row 0 : +0 relative delay
+Row 1 : +1 relative delay
+Row 2 : +2 relative delay
+ ...
+Row 8 : +8 relative delay
+```
+
+This staggered injection ensures that activation data reaches the correct PE
+at the correct clock cycle.
 
 Similar pipeline modules are used on the weight, control, and product
 paths to keep:
@@ -488,15 +507,21 @@ multiple output-column tiles are executed sequentially.
 
 Therefore, the physical 9 × 16 array is reused across both dimensions.
 
+The implemented Baseline packing/execution order keeps the K tile as the
+outer tiled loop and reuses the corresponding activation tile across the
+output-column tiles.
+
 Conceptually:
 
 ```text
-for each OC tile:
-    for each K tile:
+for each K tile:
 
-        load 9 × 16 weight tile
+    select / reuse the activation tile
 
-        stream activation vectors
+    for each OC tile:
+
+        load 9 x 16 weight tile
+        stream the activation tile
 
         if first K tile:
             Psum = 0
@@ -504,9 +529,11 @@ for each OC tile:
             Psum = Product Buffer feedback
 
         execute systolic array
-
-    store completed output tile
 ```
+
+For a given output-column tile, contributions from successive K tiles are
+accumulated through the Product Buffer feedback path until the final product
+tile is complete.
 
 Detailed examples of the matrix-to-buffer mapping and tiling order are
 provided in [Tiling and Buffer Mapping](tiling_logic.md).
@@ -589,9 +616,9 @@ This creates:
 The Baseline therefore provides the reference point for the V2
 architecture.
 
-V2 will retain the same fundamental matrix-multiplication datapath as
-much as possible while moving network-level scheduling and
-intermediate processing into the PL.
+V2 retains the same fundamental matrix-multiplication datapath while moving
+network-level scheduling and intermediate processing into the PL. V2 has now
+been implemented and is described in the extension sections below.
 
 Conceptually:
 
@@ -617,7 +644,7 @@ PL MatMul
 ...
 
 
-V2 target
+V2 implemented direction
 
 PS
  │
@@ -738,3 +765,363 @@ Key characteristics of the Baseline are:
 The system-level PS–PL interface is maintained as the common platform
 for the later V2 and V3 engines, while the internal NPU execution
 architecture is progressively modified.
+
+---
+
+# 15. V2 End-to-End PL Extension
+
+V2 keeps the same system-level AXI4-Lite Block Design, 9 x 16
+weight-stationary systolic array, Weight Buffer, Activation Buffer, Product
+Buffer, and tiled MatMul structure used by V1.
+
+The main architectural change is **where CNN orchestration occurs**.
+
+In V1, the PS repeatedly prepares a layer, starts a MatMul, reads the Product
+Buffer, performs post-processing, and then prepares the next layer. In V2,
+Conv1 through FC2 are scheduled inside the PL after the per-image input and
+bias parameters have been staged.
+
+The implemented V2 partition is:
+
+```text
+PS
+ |
+ |-- original CIFAR-10 normalization / input quantization
+ |-- per-image scaled-bias preparation
+ |
+ +-- scaled bias parameters
+ +-- 3 x 32 x 32 INT8 RGB input
+ |
+ v
++-----------------------------------------------------------+
+|                           PL                              |
+|                                                           |
+|   CNN / tile scheduling                                   |
+|          |                                                |
+|          v                                                |
+|   Im2col / activation preparation                         |
+|          |                                                |
+|          v                                                |
+|   Shared 9 x 16 tiled MatMul datapath                     |
+|          |                                                |
+|          v                                                |
+|   ReLU -> max/shift detect -> requantization -> pooling   |
+|          |                                                |
+|          +---------------------> Product Buffer feedback  |
+|          |                                                |
+|          v                                                |
+|      next layer ... -> GAP -> FC1 -> FC2                  |
++--------------------------+--------------------------------+
+                           |
+                           v
+                       10 logits
+                           |
+                           v
+                           PS
+```
+
+The critical distinction is that **there is no PS intervention between
+Conv/FC layers once V2 execution has started**. Intermediate feature maps
+remain in the PL and are fed directly into the next layer's execution flow.
+
+---
+
+# 16. V2 Convolution and Im2col Support
+
+The target CNN uses 3 x 3 stride-1, padding-1 convolutions. The Baseline
+constructs `im2col` data in software before loading the accelerator.
+
+V2 moves this preparation into the PL execution path. The RTL uses local
+register/buffer logic around the activation path to generate the 3 x 3
+windows required by the tiled MatMul engine rather than asking the PS to
+materialize and transmit the complete im2col matrix. For a 32-pixel-wide
+feature map with one-pixel zero padding, the local window-generation context
+is organized around a **3 x 34** padded-row register structure.
+
+The high-level relation remains:
+
+```text
+Feature map
+    |
+    v
+3 x 3 window generation / im2col-equivalent scheduling
+    |
+    v
+A[S x K],  K = Cin x 9
+    |
+    v
+9-wide K tiles
+    |
+    v
+9 x 16 systolic array
+```
+
+The 1024-deep Activation Buffer organization is retained. Larger logical
+feature maps are handled by channel/tile scheduling rather than increasing
+the BRAM depth to hold every logical tensor in one monolithic buffer.
+
+---
+
+# 17. V2 Post-Processing Datapath
+
+V2 distributes the added post-processing work across local modules instead
+of placing every function in one large centralized controller datapath.
+
+The main functional blocks are:
+
+| Block | V2 responsibility |
+|---|---|
+| `Ctrl` | CNN/layer scheduling, pooling/GAP sequencing, bias/requant control |
+| `sa_to_pb` | ReLU and local maximum/shift tracking on SA outputs |
+| `Biggest` | reduction of shift candidates to the layer-wide shift requirement |
+| `ctrl_to_pb` | shift-based requantization, max pooling, and bias transport control |
+| `Product Loader` | selects the proper initial/feedback partial-sum source, including bias injection |
+| Product Buffer | stores intermediate/final products and supports next-stage feedback |
+
+The implemented dataflow can be summarized as:
+
+```mermaid
+flowchart LR
+    SA[9 x 16 Systolic Array] --> STP[sa_to_pb\nReLU + local shift tracking]
+    STP --> PB[Product Buffer]
+    STP --> BIG[Biggest\nlayer-wide shift]
+    BIG --> CTP[ctrl_to_pb\nrequant + maxpool]
+    PB --> CTP
+    CTP --> PB
+    CTP --> PLD[Product Loader\nbias / psum selection]
+    PLD --> SA
+    CTRL[Ctrl\nlayer scheduling] --> SA
+    CTRL --> CTP
+```
+
+This structure also reflects the V1 timing observation that the centralized
+controller/control-distribution network was already close to the 125 MHz
+limit. Localizing post-processing helps keep added arithmetic away from the
+main global control path.
+
+---
+
+# 18. ReLU and Layer-Wide Shift Detection
+
+After a weighted layer produces a valid accumulator result, `sa_to_pb`
+performs ReLU when enabled:
+
+```text
+x < 0  -> 0
+x >= 0 -> x
+```
+
+At the same time, it records the magnitude information required for
+power-of-two requantization.
+
+The shift is **not reset per output channel**. The shift decision represents
+the activation tensor/layer output that will become the next weighted
+layer's INT8 input. `Biggest` combines the valid shift candidates and
+provides the maximum required shift to the downstream control path.
+
+Conceptually:
+
+```text
+SA outputs from all valid OC tiles
+            |
+            v
+      ReLU + shift candidates
+            |
+            v
+         Biggest
+            |
+            v
+    one layer-wide shift
+            |
+            v
+       ctrl_to_pb
+```
+
+---
+
+# 19. Shift-Based Requantization and Pooling
+
+The original software reference uses an arbitrary activation scale derived
+from the activation range. V2 replaces the intermediate rescaling operation
+with a power-of-two approximation that is directly implementable using a
+right shift and rounding.
+
+Conceptually:
+
+```text
+q = round(x / 2^shift)
+```
+
+The RTL uses the shifted value plus the highest discarded bit as the rounding
+term and then saturates the result to the target INT8 range.
+
+For blocks containing max pooling, `ctrl_to_pb` combines the required 2 x 2
+values and only emits the pooled result when the complete pooling group has
+arrived.
+
+For the final 4 x 4 Global Average Pooling stage, 16 values per channel are
+accumulated and division by 16 is implemented as a 4-bit right shift with
+rounding:
+
+```text
+sum16 = x0 + x1 + ... + x15
+GAP   = (sum16 >> 4) + rounding_bit(bit 3)
+```
+
+The GAP result is then saturated/requantized before FC1.
+
+---
+
+# 20. Bias Injection
+
+A weighted-layer output is conceptually:
+
+```text
+Product = Bias + Weight x Activation
+```
+
+In integer inference, the bias must be represented in the same accumulator
+scale as the INT8 x INT8 MAC result. Conceptually:
+
+```text
+bias_acc ~= bias_real / (activation_scale x weight_scale)
+```
+
+The V2 development evaluated two bias-handling approaches.
+
+### Initial hardware-rescaling approach
+
+Bias was preloaded and the PL attempted to adapt it as the activation scale
+changed. The resulting full-dataset accuracy was only:
+
+```text
+103 / 1000 = 10.3%
+```
+
+### Accepted V2 approach
+
+The PS prepares activation-scale-dependent bias values in the model-consistent
+Q32 form and loads all 522 bias values for the current image before V2
+execution.
+
+```text
+Conv1 :  32 biases
+Conv2 :  32
+Conv3 :  64
+Conv4 :  64
+Conv5 :  96
+Conv6 :  96
+FC1   : 128
+FC2   :  10
+----------------
+Total : 522 biases
+```
+
+The Product Loader path carries the selected bias into the partial-sum input
+for the beginning of the corresponding accumulation so that the systolic
+array computes the biased product without requiring a PS-side intermediate
+feature-map round trip.
+
+This approach restores the verified V2 accuracy to:
+
+```text
+915 / 1000 = 91.5%
+```
+
+---
+
+# 21. V2 Execution Workflow
+
+Weights are still treated as model-static data and are preloaded at startup.
+The per-image workflow is:
+
+```text
+Startup
+  |
+  +-- preload all weights
+
+Per image
+  |
+  +-- PS normalization / INT8 input quantization
+  |
+  +-- prepare + load 522 scaled bias values
+  |
+  +-- load 3072 RGB activation values
+  |
+  +-- start / enter end-to-end V2 execution
+  |
+  +-- PL: Conv1 -> ... -> Conv6 -> GAP -> FC1 -> FC2
+  |
+  +-- read 10 logits
+```
+
+The dominant payload-transfer count used in the research report is therefore:
+
+```text
+Bias writes  :  522
+RGB writes   : 3072
+Logit reads  :   10
+-------------------
+Total        : 3604 handshakes / image
+```
+
+The Baseline equivalent count is 748,650 payload handshakes per image, so V2
+reduces this communication count by approximately 99.52%.
+
+---
+
+# 22. V1 vs. V2 Architectural Delta
+
+The comparison is intentionally incremental.
+
+| Component | V1 | V2 |
+|---|---|---|
+| System Block Design | fixed | same |
+| AXI4-Lite PS-PL link | fixed | same |
+| 9 x 16 SA | tiled MatMul | reused |
+| DSP count | 144 | 144 |
+| BRAM footprint | 116.5 | 116.5 |
+| Layer scheduling | PS | PL |
+| im2col preparation | PS | PL-local generation/scheduling |
+| ReLU | PS | PL |
+| Requantization | PS | PL shift + rounding |
+| MaxPool | PS | PL |
+| GAP | PS | PL |
+| Intermediate PB readback | repeated | removed from normal layer flow |
+| Bias preparation | PS/software reference | PS per-image scaled bias load; PL bias injection |
+| Final output transfer | intermediate matrices + final result | 10 logits |
+
+The V2 implementation therefore changes the **execution partition** much more
+than the core MAC array itself. This is why DSP and BRAM usage remain unchanged
+while LUT/LUTRAM/FF increase to support the added control and post-processing
+logic.
+
+---
+
+# 23. V3 Direction
+
+The next architecture is V3: V2 plus **activation row-level ZeroSkip**.
+
+The earlier draft used the term column-level ZeroSkip. The current research
+plan has been revised to row-level activation skipping. The final zero-detect
+granularity and scheduling protocol have not yet been frozen, so V3 details
+should be documented only after the RTL design is finalized.
+
+The intended high-level behavior is:
+
+```text
+Scheduled activation row
+          |
+          v
+      all zero ?
+       /    \
+     yes     no
+      |       |
+      v       v
+    skip    execute
+             SA work
+```
+
+V2 is the controlled reference for measuring the cycle, timing, resource,
+power, and energy impact of that optimization.
+
