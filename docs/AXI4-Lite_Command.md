@@ -1,493 +1,185 @@
 # AXI4-Lite Command Interface
 
-The accelerator is controlled through a 32-bit AXI4-Lite interface between the Processing System (PS) and Programmable Logic (PL).
+This document records the software-visible command interface for the Project-2 accelerators.
 
-The interface is used as a **command interface**, rather than as a conventional set of persistent configuration registers.  
-A PS-to-PL write command is accepted once by the AXI slave and converted into a one-clock `In_Valid` pulse for the accelerator controller.
+The Baseline (V1) and End-to-End (V2) engines use the same 32-bit AXI4-Lite PS-PL connection, but the command semantics differ substantially. The V2 section below describes the **verified host protocol used by the Vitis application/XSA pair that produced 91.5% accuracy and 5.004 ms/image**.
 
 ---
 
-# 1. Baseline — PS-Managed MatMul
+# 1. Baseline (V1) — PS-Managed MatMul
 
-The Baseline architecture uses the PS to explicitly manage:
+V1 uses the PS to explicitly manage weight loading, activation loading, MatMul configuration/execution, Product Buffer reads, and status polling.
 
-- weight loading,
-- activation loading,
-- MatMul configuration,
-- MatMul execution,
-- Product Buffer read requests,
-- result/status polling.
-
-The PL primarily operates as a MatMul accelerator.
-
-## Address Map
+## V1 Address Map
 
 | Offset | Operation | Direction | Description |
 |---:|---|---|---|
-| `0x00` | RCODE | PL → PS | Read accelerator status / PB read response |
-| `0x04` | Load Weight | PS → PL | Write weight data into the Weight Buffer |
-| `0x08` | Load Activation | PS → PL | Write activation data into the Activation Buffer |
-| `0x0C` | Configure / Execute | PS → PL | Configure and start MatMul |
-| `0x10` | Read Product Buffer | PS → PL | Request Product Buffer data |
+| `0x00` | RCODE | PL -> PS | status / PB response |
+| `0x04` | Load Weight | PS -> PL | one INT8 weight |
+| `0x08` | Load Activation | PS -> PL | one INT8 activation |
+| `0x0C` | Configure / Execute | PS -> PL | MatMul configuration/start |
+| `0x10` | Read Product Buffer | PS -> PL | PB read request |
 
-The Baseline therefore uses five AXI word slots.
+### `0x04` — Weight
 
 ```text
-AWADDR[4:2]
-
-000 -> 0x00
-001 -> 0x04
-010 -> 0x08
-011 -> 0x0C
-100 -> 0x10
+{WB_Address[15:0], Column[7:0], Data[7:0]}
 ```
+
+### `0x08` — Activation
+
+```text
+{AB_Address[15:0], Row[7:0], Data[7:0]}
+```
+
+### `0x0C` — Baseline MatMul Commands
+
+```text
+00 : {2'b00, S[14:0],  IC[14:0]}
+01 : {2'b01, OC[14:0], WOffset[14:0]}
+10 : execute
+```
+
+Typical sequence:
+
+```text
+load activation
+ -> configure S / IC
+ -> configure OC / WOffset
+ -> execute MatMul
+ -> poll BUSY / DONE
+ -> request Product Buffer data
+ -> read Product Buffer data
+ -> PS post-processing
+ -> repeat
+```
+
+The detailed V1 implementation is retained in the baseline source tree; the remainder of this document focuses on the final V2 protocol.
 
 ---
 
-## `0x04` — Load Weight
+# 2. V2 — Verified End-to-End PL Protocol
 
-**Direction:** PS → PL
+V2 no longer exposes layer-by-layer MatMul execution to software. After startup model staging and per-image input staging, the PL schedules Conv1 through FC2 internally.
 
-Writes one INT8 weight value into the Weight Buffer.
-
-```verilog
-{16'b_WBaddress, 8'b_colnum, 8'b_Data}
-```
-
-### Bit Field
-
-```text
-31                16 15              8 7                0
-+-------------------+------------------+------------------+
-|    WB Address     |      Column      |       Data       |
-|      16 bits      |      8 bits      |      8 bits      |
-+-------------------+------------------+------------------+
-```
-
-| Field | Width | Description |
-|---|---:|---|
-| `WBaddress` | 16 bits | Weight Buffer address |
-| `colnum` | 8 bits | Target Weight Buffer column |
-| `Data` | 8 bits | INT8 weight value |
-
----
-
-## `0x08` — Load Activation
-
-**Direction:** PS → PL
-
-Writes one INT8 activation value into the Activation Buffer.
-
-```verilog
-{16'b_ABaddress, 8'b_rownum, 8'b_Data}
-```
-
-### Bit Field
-
-```text
-31                16 15              8 7                0
-+-------------------+------------------+------------------+
-|    AB Address     |       Row        |       Data       |
-|      16 bits      |      8 bits      |      8 bits      |
-+-------------------+------------------+------------------+
-```
-
-| Field | Width | Description |
-|---|---:|---|
-| `ABaddress` | 16 bits | Activation Buffer address |
-| `rownum` | 8 bits | Target Activation Buffer row |
-| `Data` | 8 bits | INT8 activation value |
-
----
-
-## `0x0C` — Configure / Execute
-
-**Direction:** PS → PL
-
-The Baseline uses multiple writes to `0x0C` to configure and execute one MatMul operation.
-
-Bits `[31:30]` specify the command type.
-
-### `2'b00` — Configure `S` and `IC`
-
-```verilog
-{2'b00, 15'b_S, 15'b_IC}
-```
-
-```text
-31  30 29                 15 14                   0
-+------+--------------------+----------------------+
-|  00  |         S          |          IC          |
-|2 bits|      15 bits       |       15 bits        |
-+------+--------------------+----------------------+
-```
-
-- `S`: number of input rows / spatial positions
-- `IC`: GEMM K dimension
-
-For CNN convolution,
-
-```text
-IC = Cin × Kernel_H × Kernel_W
-```
-
-and the current design uses a `3 × 3` kernel, so:
-
-```text
-IC = Cin × 9
-```
-
----
-
-### `2'b01` — Configure `OC` and Weight Offset
-
-```verilog
-{2'b01, 15'b_OC, 15'b_WOffset}
-```
-
-```text
-31  30 29                 15 14                   0
-+------+--------------------+----------------------+
-|  01  |         OC         |      WOffset         |
-|2 bits|      15 bits       |       15 bits        |
-+------+--------------------+----------------------+
-```
-
-- `OC`: output-channel count
-- `WOffset`: Weight Buffer offset
-
----
-
-### `2'b10` — Execute MatMul
-
-```verilog
-{2'b10, 30'dX}
-```
-
-```text
-31  30 29                                         0
-+------+-------------------------------------------+
-|  10  |                 Don't Care                |
-|2 bits|                  30 bits                  |
-+------+-------------------------------------------+
-```
-
-Receiving this command starts MatMul using the previously configured values.
-
-### Typical Sequence
-
-```text
-Write 0x0C : {00, S, IC}
-        ↓
-Write 0x0C : {01, OC, WOffset}
-        ↓
-Write 0x0C : {10, X}
-        ↓
-Execute MatMul
-```
-
----
-
-## `0x10` — Read Product Buffer
-
-**Direction:** PS → PL
-
-Requests one value from the Product Buffer.
-
-```verilog
-{16'b_PBaddress, 8'b_colnum, 8'd0}
-```
-
-### Bit Field
-
-```text
-31                16 15              8 7                0
-+-------------------+------------------+------------------+
-|    PB Address     |      Column      |        0         |
-|      16 bits      |      8 bits      |      8 bits      |
-+-------------------+------------------+------------------+
-```
-
-| Field | Width | Description |
-|---|---:|---|
-| `PBaddress` | 16 bits | Product Buffer address |
-| `colnum` | 8 bits | Target Product Buffer column |
-| Reserved | 8 bits | Set to `0` |
-
-The Product Buffer request and response are asynchronous from the software point of view.
-
-After issuing the request, the PS polls `0x00` until the requested PB data becomes valid.
-
----
-
-## `0x00` — RCODE
-
-**Direction:** PL → PS
-
-`0x00` is a read-only response/status register.
-
-```verilog
-{BUSY, DONE, PENDING, VALID, DATA[27:0]}
-```
-
-### Bit Field
-
-```text
-31      30       29         28 27                    0
-+-------+--------+----------+-----+--------------------+
-| BUSY  |  DONE  | PENDING  |VALID|        DATA        |
-| 1 bit | 1 bit  |  1 bit   |1 bit|      28 bits       |
-+-------+--------+----------+-----+--------------------+
-```
-
-| Bit | Field | Description |
-|---:|---|---|
-| 31 | `BUSY` | MatMul execution is active |
-| 30 | `DONE` | MatMul execution has completed |
-| 29 | `PENDING` | Product Buffer read request is pending |
-| 28 | `VALID` | Requested Product Buffer data is valid |
-| 27:0 | `DATA` | Returned Product Buffer data |
-
-### RCODE States
-
-| BUSY | DONE | PENDING | VALID | Meaning |
-|---:|---:|---:|---:|---|
-| 1 | 0 | 0 | 0 | MatMul executing |
-| 0 | 1 | 0 | 0 | MatMul completed |
-| 0 | 1 | 1 | 0 | Product Buffer read pending |
-| 0 | 1 | 0 | 1 | Product Buffer read data valid |
-
-`PENDING` and `VALID` are **sticky states**, not one-cycle pulses.
-
-When a Product Buffer read request is issued:
-
-```text
-PENDING = 1
-VALID   = 0
-```
-
-When the requested data arrives:
-
-```text
-PENDING = 0
-VALID   = 1
-DATA    = requested Psum
-```
-
-Reading `0x00` does **not** clear or advance the controller state.
-
----
-
-## Baseline Transaction Flow
-
-A typical Baseline inference step is:
-
-```text
-PS
- │
- ├── 0x04 : Load weights
- │
- ├── 0x08 : Load activations
- │
- ├── 0x0C : Configure S / IC
- │
- ├── 0x0C : Configure OC / WOffset
- │
- ├── 0x0C : Execute MatMul
- │
- ├── 0x00 : Poll BUSY / DONE
- │
- ├── 0x10 : Request Product Buffer data
- │
- └── 0x00 : Poll PENDING / VALID and read DATA
-```
-
-This sequence is repeated as required by the PS-managed CNN inference flow.
-
----
-
-# 2. AXI4-Lite Write Handling
-
-The AXI4-Lite write-address (`AW`) and write-data (`W`) channels are independent.
-
-The slave therefore must **not** assume that `AWVALID` and `WVALID` arrive in the same clock cycle.
-
-The intended implementation is:
-
-```text
-AW handshake
-     ↓
-Latch write address
-
-W handshake
-     ↓
-Latch write data
-
-Address captured && Data captured
-     ↓
-Generate In_Valid for 1 clock
-     ↓
-Send In_Offset + In_Instruction to MatMul
-     ↓
-Generate AXI write response
-```
-
-The accelerator command interface receives:
-
-```text
-In_Valid
-In_Offset
-In_Instruction
-```
-
-`In_Valid` must be asserted for exactly one clock when a new PS-to-PL AXI command is accepted.
-
-This prevents the same command from being executed multiple times while AXI register values remain stable for multiple cycles.
-
----
-
-# 3. AXI4-Lite Read Handling
-
-The PS reads the current RCODE using:
-
-```c
-Xil_In32(BASE_ADDR + 0x00);
-```
-
-The AXI slave returns the current:
-
-```verilog
-MatMul_Rcode
-```
-
-The RCODE value should be latched when the AXI read transaction begins so that `RDATA` remains stable if `RVALID` is stalled.
-
-Reading RCODE must not modify accelerator state.
-
----
-
----
-
-# 4. V2 - End-to-End PL Inference
-
-V2 keeps the same 32-bit AXI4-Lite slave connection but changes the
-software-visible execution model.
-
-The PS no longer configures every individual MatMul operation or reads the
-Product Buffer between CNN layers. Instead, the PS stages the per-image
-parameters/input, starts the V2 engine, and reads the final FC2 logits.
-
-The implemented workflow reported for V2 is:
-
-```text
-Startup:
-    preload weights
-
-Per image:
-    prepare / load 522 scaled bias values
-    load 3 x 32 x 32 RGB activation values
-    start end-to-end PL inference
-    wait for DONE
-    read 10 logits
-```
-
-Intermediate feature-map transfers are removed from the normal V2 inference
-path.
-
-## V2 Semantic Address Map
+## V2 Address Map
 
 | Offset | Operation | Direction | V2 role |
 |---:|---|---|---|
-| `0x00` | RCODE / Result | PL -> PS | status and final logit readback |
+| `0x00` | RCODE / Result | PL -> PS | BUSY, DONE, class/logit readback |
 | `0x04` | Load Weight | PS -> PL | model-static INT8 weight preload |
-| `0x08` | Load Activation | PS -> PL | preprocessed RGB INT8 input upload |
-| `0x0C` | Parameter / Control | PS -> PL | V2 bias/control path and execution control |
+| `0x08` | Load Activation | PS -> PL | RGB INT8 input upload |
+| `0x0C` | Parameter | PS -> PL | 32-bit parameter transfer |
 
-`0x10` Product Buffer readback is a Baseline operation and is not part of the
-normal V2 layer-by-layer inference flow.
+The NPU AXI base address in the verified design is `0x40000000`.
 
 ---
 
-## `0x00` - V2 RCODE / Logit Readback
+## 2.1 `0x00` — RCODE / Final Logits
 
-The V2 result path uses the status bits plus a class/logit payload.
+The verified V2 convention is:
 
-The implemented V2 software convention is:
-
-```verilog
+```text
 {BUSY, DONE, Class[3:0], Logit[25:0]}
 ```
 
 ```text
 31      30 29        26 25                           0
 +-------+--+------------+-----------------------------+
-| BUSY  |DONE|  Class    |            Logit            |
-| 1 bit |1bit|  4 bits   |           26 bits           |
+| BUSY  |DONE|   Class    |            Logit           |
 +-------+--+------------+-----------------------------+
 ```
 
-| Field | Width | Description |
-|---|---:|---|
-| `BUSY` | 1 bit | V2 inference/control path is active |
-| `DONE` | 1 bit | end-to-end CNN inference has completed |
-| `Class` | 4 bits | CIFAR-10 logit/class index |
-| `Logit` | 26 bits | signed logit payload |
+`Logit[25:0]` is interpreted as a signed 26-bit value.
 
-The Vitis application waits for `DONE` and then consumes the 10 FC2 logits.
-The final class is obtained from the maximum logit.
+After the final layer completes, software preserves the **first RCODE read that observes `DONE`**, because that same read already contains the first logit. Nine further accepted result reads return the remaining class/logit entries.
 
 ---
 
-## `0x04` - V2 Weight Preload
+## 2.2 `0x04` — Weight Preload
 
-Weights remain model-static and are loaded once during startup.
+Weights are model-static and are loaded once at startup.
 
-V2 reuses the same logical write packing as the Baseline weight path:
-
-```verilog
-{16'b_WBaddress, 8'b_colnum, 8'b_Data}
+```text
+{WB_Address[15:0], Column[7:0], Data[7:0]}
 ```
 
-The 9 x 16 tiled packing and Weight Buffer layout are described in
-[`tiling_logic.md`](tiling_logic.md).
+The host uses K-tile-major / output-channel-tile-minor packing for the 9x16 systolic array.
 
-Weight preload time is kept separate from the per-image inference timing.
+Verified layer weight-buffer bases:
+
+| Layer | Base |
+|---|---:|
+| Conv1 | 0 |
+| Conv2 | 54 |
+| Conv3 | 630 |
+| Conv4 | 1782 |
+| Conv5 | 4086 |
+| Conv6 | 7542 |
+| FC1 | 12726 |
+| FC2 | 13518 |
+
+See [`tiling_logic.md`](tiling_logic.md) for mapping details.
 
 ---
 
-## `0x08` - V2 RGB Activation Upload
+## 2.3 `0x08` — RGB Activation Upload
 
-The PS performs the original CIFAR-10 normalization and INT8 input
-quantization, then uploads the complete image:
+The PS performs CIFAR-10 normalization and global INT8 quantization before upload.
+
+Each image contains:
 
 ```text
 3 x 32 x 32 = 3072 INT8 values
 ```
 
-The V2 activation write convention retains an address/channel/data form:
+The command packing is:
 
-```verilog
-{16'b_ABaddress, 8'b_channel, 8'b_Data}
+```text
+{AB_Address[15:0], Channel[7:0], Data[7:0]}
 ```
 
-where the channel field identifies the RGB input stream used by the V2 input
-path.
+with channel identifiers corresponding to the R/G/B input channels.
 
-Unlike V1, the PS does not materialize and upload every later layer's im2col
-matrix. Those later activations remain inside the PL.
+The verified host sequence is:
+
+```text
+R channel: 1024 writes
+G channel: 1024 writes
+B channel: 1024 writes
+```
+
+Unlike V1, later feature maps are not returned to the PS between layers.
 
 ---
 
-## `0x0C` - V2 Scaled-Bias / Control Path
+## 2.4 `0x0C` — Full 32-bit Parameter Protocol
 
-Bias handling changed during V2 development.
+The final verified implementation transfers one 32-bit parameter using **two AXI writes**.
 
-The accepted V2 implementation does **not** rely on the earlier draft in this
-document that described a simple execute-only `0x0C` register. The research
-report shows that the final verified flow prepares activation-scale-dependent
-bias values on the PS and transfers 522 scaled Q32 bias values for each image.
+### LOW half
 
-The number 522 is the sum of all Conv/FC output-channel biases:
+```text
+{1'b0, ParamNumber[14:0], Value[15:0]}
+```
+
+### HIGH half
+
+```text
+{1'b1, ParamNumber[14:0], Value[31:16]}
+```
+
+The LOW write stages the lower 16 bits; the HIGH write supplies the upper 16 bits and completes the parameter transfer.
+
+### Parameter Map
+
+| Parameter | Meaning | Lifetime |
+|---|---|---|
+| `0..521` | signed `bias_over_weight_scale` Q16 | startup |
+| `522..529` | reciprocal weight scale Q16 for Conv1..FC2 | startup |
+| `530` | reciprocal input activation scale Q16 | per image |
+
+The 522 bias entries correspond to:
 
 ```text
 Conv1 :  32
@@ -502,58 +194,83 @@ FC2   :  10
 Total : 522
 ```
 
-Conceptually, the bias must be represented in the current accumulator domain:
+**Important:** parameters `0..529` are loaded once during model preload. They are **not** transferred again for every image in the verified V2 host path. Only parameter `530` is image-dependent.
 
-```text
-bias_acc ~= bias_real / (activation_scale x weight_scale)
-```
-
-The Product Loader / partial-sum path then injects the selected bias into the
-corresponding accumulation inside the PL.
-
-### Important interface note
-
-The professor-report PDF records the **semantic behavior** and the final
-`522 writes/image` communication count, but it does not contain the final
-bit-level `0x0C` bias encoding. Therefore, the earlier planned half-write
-parameter encoding should not be treated as the final public register map.
-
-The exact field packing should be copied from the final checked-in RTL/Vitis
-helper when that source is frozen. This document intentionally avoids
-inventing a bitfield that is not supported by the report.
+This supersedes the earlier experimental V2 description in which 522 activation-scale-dependent bias values were prepared and transferred per image.
 
 ---
 
-## V2 Start / Execute Behavior
-
-After the per-image bias and RGB input have been staged, the V2 control path
-starts the end-to-end inference sequence.
-
-Once started, the PL performs:
+# 3. Verified V2 Startup Flow
 
 ```text
-Conv1
- -> Conv2 -> MaxPool1
- -> Conv3
- -> Conv4 -> MaxPool2
- -> Conv5
- -> Conv6 -> MaxPool3
- -> GAP
- -> FC1
- -> FC2
+Program PL
+   |
+   v
+Preload all model weights through 0x04
+   |
+   v
+Preload params 0..521 through 0x0C
+   |
+   v
+Preload params 522..529 through 0x0C
+   |
+   v
+Ready for image inference
 ```
 
-without normal PS intervention between layers.
-
-The PS polls the V2 status until completion and then reads the final logits.
+Weight preload and parameter `0..529` staging are startup costs and are excluded from steady-state per-image payload traffic.
 
 ---
 
-# 5. Communication Reduction: V1 vs. V2
+# 4. Verified V2 Per-Image Flow
 
-The research report counts the dominant payload transfers as follows.
+```text
+PS preprocessing
+   |
+   +--> normalized / quantized RGB INT8
+   `--> reciprocal input scale Q16
 
-## V1
+write param 530 LOW
+write param 530 HIGH
+        |
+        v
+upload R (1024)
+        |
+        v
+upload G (1024)
+        |
+        v
+upload B (1024)
+        |
+        v
+PL executes end-to-end CNN
+        |
+        v
+poll DONE
+        |
+        v
+consume 10 class/logit results
+```
+
+The bare-metal Vitis host waits for the R/G processing handshake before G and similarly between G and B. In PYNQ/Jupyter, the BUSY-high pulse can be shorter than Python MMIO polling latency; the validated notebook therefore uses a short guard interval after R/G and waits for the interface to be non-BUSY before sending the next channel.
+
+That Jupyter workaround does not change the NPU arithmetic or the software-visible data format.
+
+---
+
+# 5. Fixed Per-Image Payload Count
+
+For the final verified V2 protocol:
+
+```text
+Param 530      :    2 AXI writes
+RGB input      : 3072 AXI writes
+Final logits   :   10 AXI reads
+--------------------------------
+Fixed payload  : 3084 word accesses / image
+```
+
+The V1 architectural payload count used in this project is:
 
 ```text
 im2col activation LOAD : 637,920
@@ -562,28 +279,15 @@ Product Buffer READ    : 110,730
 Total                  : 748,650 / image
 ```
 
-## V2
+Thus, using the same fixed-payload counting convention:
 
 ```text
-Scaled bias writes :  522
-RGB input writes   : 3072
-Final logit reads  :   10
-------------------------
-Total              : 3604 / image
+3084 / 748650 ~= 0.00412
 ```
 
-Therefore:
+or roughly a **99.59% reduction** in fixed payload transfers.
 
-```text
-3604 / 748650 = 0.004814
-```
-
-V2 retains only about `0.4814%` of the Baseline payload-transfer count, a
-reduction of approximately `99.52%`.
-
-These counts are **payload-transfer counts used for the architectural
-comparison**. They do not include every AXI protocol handshake or every status
-poll performed by software.
+These numbers deliberately exclude variable status-poll reads and AXI protocol-level channel handshakes. They are software-visible payload-access counts for architectural comparison.
 
 ---
 
@@ -593,33 +297,35 @@ poll performed by software.
 V1
 
 PS
- |-- load activation / im2col data
- |-- configure S / IC
- |-- configure OC / WOffset
- |-- execute one MatMul
- |-- poll DONE
- |-- request PB data
- |-- read PB data
+ |-- load layer activation / im2col
+ |-- configure MatMul
+ |-- execute
+ |-- poll
+ |-- read Product Buffer
  |-- post-process / requantize
- `-- repeat
+ `-- repeat for each layer/tile
 
 
 V2
 
 Startup:
-PS -- preload weights --> PL
+PS -- weights + params 0..529 --> PL
 
 Per image:
-PS -- load scaled bias --> PL
-PS -- load RGB input --> PL
-PS -- start -----------> PL
-                         |
-                         | Conv1 ... FC2 internally
-                         v
-PS <-- 10 logits ------- PL
+PS -- param 530 -------------> PL
+PS -- R/G/B input -----------> PL
+                                |
+                                | Conv1 ... FC2 internally
+                                v
+PS <-- 10 logits ------------ PL
 ```
 
-The main V2 benefit is therefore not a different AXI transport technology. It
-is the elimination of most software-visible layer transactions while keeping
-the same basic AXI4-Lite system integration.
+The primary V2 gain is therefore the elimination of repeated PS-managed layer execution and intermediate feature-map traffic while retaining the same basic AXI4-Lite system integration.
 
+---
+
+# 7. Source-of-Truth Note
+
+The final V2 protocol above is based on the checked-in `v2/vitis_application/npu_v2_hw.h` / `.c` host implementation and the matching hardware export used for the verified `91.5% / 5.004 ms` result.
+
+Project development included earlier bias-handling experiments. Documentation or RTL snapshots that describe per-image loading of all 522 scaled biases represent those intermediate stages and should not be used to infer the final verified host protocol without checking the matching build provenance.
