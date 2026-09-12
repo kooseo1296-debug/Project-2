@@ -2,27 +2,81 @@
 
 ## Overview
 
-This project investigates how the execution structure of an FPGA-based neural processing unit (NPU) affects CIFAR-10 inference latency, communication overhead, and hardware cost.
+This project investigates how the execution structure of an FPGA-based neural processing unit (NPU) affects CIFAR-10 inference latency, PS-PL communication, hardware cost, and practical live-demo behavior.
 
-The work is motivated by the live-demo implementation of our previous FPGA NPU, where the matrix multiplication itself was accelerated in the Programmable Logic (PL), but convolution scheduling, `im2col`, post-processing, requantization, and repeated intermediate-data movement were still managed by the Processing System (PS).
+The work extends a previous PYNQ-Z2 FPGA NPU in which the Programmable Logic (PL) primarily accelerated tiled matrix multiplication while convolution scheduling, `im2col`, post-processing, requantization, and repeated intermediate-data movement were managed by the Processing System (PS).
 
-[Watch Live Demo Video](https://drive.google.com/file/d/1lzkIqhfIcX4UrQ2W33rvNfDzw1MxMoIF/view?usp=drive_link)
+Project 2 reorganizes that execution model so that the complete CNN from Conv1 through FC2 can execute inside the PL after the input image and required scale metadata are staged.
 
-The practical target of Project 2 is to make the CIFAR-10 inference pipeline fast enough for real-time video inference. A 30 FPS target corresponds to approximately `33.3 ms/frame`.
+The project roadmap is:
 
-Three engines are used as the project roadmap:
+1. **Baseline Engine (V1)** — PS-managed inference; PL primarily executes tiled MatMul.
+2. **End-to-End Engine (V2)** — Conv1 through FC2 are scheduled and executed inside the PL.
+3. **Zero-Skip Engine (V3)** — V2 extended with **activation row-level ZeroSkip**.
 
-1. **Baseline Engine (V1)** - PS-managed inference; PL primarily executes tiled MatMul.
-2. **End-to-End Engine (V2)** - Conv1 through FC2 are scheduled and executed inside the PL after per-image parameter/input staging.
-3. **Zero-Skip Engine (V3)** - V2 extended with **activation row-level ZeroSkip**.
+V1 and V2 are implemented and evaluated on PYNQ-Z2.  
+The V2 PYNQ/Jupyter live-camera demonstration is also complete.  
+V3 is the next architectural step.
 
-V1 and V2 have now both been implemented and evaluated on PYNQ-Z2. V3 is the next architectural step.
+---
+
+## Live Demo
+
+The verified V2 accelerator has been integrated into a camera-driven PYNQ/Jupyter demonstration.
+
+- [Watch the V2 Live Camera Demo](https://drive.google.com/file/d/1bns6vxbrneyFb1yLkzVsFXlarAnewryC/view?usp=drive_link)
+- [Open the Live-Demo Notebook](v2/v2_live_demo/V2_Final_Live_Camera_Demo_Single.ipynb)
+- [Live-Demo Setup and Usage](v2/v2_live_demo/README.md)
+
+The live path is:
+
+```text
+HCAM01L USB webcam
+        |
+        v
+PYNQ Linux / OpenCV
+        |
+        v
+center crop + resize to 32 x 32
+        |
+        v
+BGR -> RGB
+        |
+        v
+CIFAR-10 mean/std normalization
+        |
+        v
+global signed INT8 input quantization
+        |
+        v
+AXI4-Lite input staging
+        |
+        v
+V2 FPGA NPU
+Conv1 -> ... -> FC2
+        |
+        v
+10 logits / predicted class
+        |
+        v
+Jupyter live display
+```
+
+The controlled benchmark and the live-camera demonstration measure different scopes:
+
+| Measurement | Result | Scope |
+|---|---:|---|
+| CIFAR-10 accuracy | 91.5% | 1,000-image validation |
+| Vitis end-to-end latency | 5.004 ms/image | preprocessing + host staging + PL inference + logits |
+| Current live-demo throughput | ~5 FPS | complete camera/Jupyter/display path |
+
+The ~5 FPS live-demo rate is therefore **not** interpreted as RTL-only NPU throughput.
 
 ---
 
 ## Headline Result
 
-The implemented V2 engine reduces end-to-end inference latency from `338.03 ms/image` to `5.004 ms/image` while maintaining nearly the same CIFAR-10 accuracy.
+The implemented V2 engine reduces measured end-to-end inference latency from `338.03 ms/image` to `5.004 ms/image` while maintaining nearly the same CIFAR-10 accuracy.
 
 | Metric | V1 Baseline | V2 End-to-End | Change |
 |---|---:|---:|---:|
@@ -37,27 +91,29 @@ The implemented V2 engine reduces end-to-end inference latency from `338.03 ms/i
 | DSP | 144 | 144 | unchanged |
 | 125 MHz setup slack | +0.041 ns | +0.119 ns | both meet timing |
 
-The measured V2 inference interval is well below the `33.3 ms/frame` compute budget corresponding to 30 FPS. The final camera-to-display Live Demo FPS still needs to be measured separately because camera capture, image conversion, display, and other I/O overhead are outside this benchmark.
+The Vitis result is well below the `33.3 ms/frame` compute budget corresponding to 30 FPS.
 
-> The energy values above use Vivado implementation power estimates multiplied by the measured inference latency. They are system-level estimates, not direct NPU-only board-power measurements.
+Camera capture, Python/Jupyter execution, rendering, and display are outside that controlled benchmark and are measured separately in the live-demo path.
+
+> The energy values use Vivado implementation power estimates multiplied by measured end-to-end inference latency. They are system-level estimates, not direct NPU-only board-power measurements.
 
 ---
 
 ## Motivation
 
-The original Jupyter-based live-demo pipeline required roughly **80 s per image** in the demonstration environment. Project 2 therefore set a practical target of reaching a compute budget compatible with **30 FPS** video inference.
+The original Jupyter-based live-demo pipeline of the earlier PS-managed accelerator required very long per-image execution in the demonstration environment.
 
-For controlled architecture comparison, the software stack was moved to Vitis and the V1 baseline was re-measured. The V1 Vitis pipeline was functionally correct but still spent most of its end-to-end time outside the PL MatMul execution itself.
+The primary problem was not the systolic-array MAC itself. Repeated software intervention and PS-PL data movement were required around every weighted layer.
 
-For the V1 baseline, the measured average times were:
+For a controlled comparison, the V1 baseline was re-measured in Vitis:
 
 ```text
-End-to-end inference : 338.029 ms / image
-PL MatMul execute     :   5.803 ms / image
-Other PS / transfer   : 332.226 ms / image
+V1 end-to-end inference : 338.029 ms / image
+PL MatMul execute       :   5.803 ms / image
+Other PS / transfer     : 332.226 ms / image
 ```
 
-The baseline inference flow repeatedly performs:
+The V1 execution structure repeatedly performs:
 
 ```text
 PS: im2col / layer processing
@@ -75,14 +131,12 @@ PL -> PS Product Buffer readback
 PS: ReLU / pooling / requantization / next-layer preparation
         |
         v
-repeat for the next weighted layer
+repeat
 ```
-
-This makes PS-PL data movement and software intervention a dominant part of total latency even though the MatMul accelerator itself is much faster.
 
 The main V1-to-V2 research question is therefore:
 
-> How much end-to-end latency can be removed by keeping CNN layer execution and intermediate feature processing inside the PL?
+> How much end-to-end latency can be removed by keeping CNN scheduling and intermediate feature processing inside the PL?
 
 ---
 
@@ -91,21 +145,27 @@ The main V1-to-V2 research question is therefore:
 Project 2 uses the same CIFAR-10 Model 2 workload throughout the V1/V2 comparison:
 
 ```text
-Input 3x32x32
-  -> Conv1  3->32
-  -> Conv2 32->32 -> MaxPool
-  -> Conv3 32->64
-  -> Conv4 64->64 -> MaxPool
-  -> Conv5 64->96
-  -> Conv6 96->96 -> MaxPool
+Input 3 x 32 x 32
+  -> Conv1  3 -> 32
+  -> Conv2 32 -> 32 -> MaxPool
+  -> Conv3 32 -> 64
+  -> Conv4 64 -> 64 -> MaxPool
+  -> Conv5 64 -> 96
+  -> Conv6 96 -> 96 -> MaxPool
   -> GAP
-  -> FC1 96->128
-  -> FC2 128->10
+  -> FC1 96 -> 128
+  -> FC2 128 -> 10
 ```
 
-All convolution layers use `3x3`, stride 1, padding 1.
+All convolution layers use:
 
-For detailed layer shapes and numerical operations, see:
+```text
+Kernel  : 3 x 3
+Stride  : 1
+Padding : 1
+```
+
+For detailed numerical behavior, see:
 
 [Inference Model Documentation](docs/inference_model.md)
 
@@ -113,21 +173,19 @@ For detailed layer shapes and numerical operations, see:
 
 ## Common Hardware Platform
 
-All engines use the same system-level platform so that the architectural comparison remains controlled.
-
 ```text
 Platform        : PYNQ-Z2 / Zynq-7020
 Target workload : CIFAR-10 Model 2
 Compute array   : 9 x 16 weight-stationary systolic array
 Processing PEs  : 144
 PS-PL interface : 32-bit AXI4-Lite
-Block Design    : fixed across V1/V2/V3
 Vivado          : 2025.2.1
 Vitis           : 2025.2
 Target clock    : 125 MHz
+NPU base address: 0x40000000
 ```
 
-The Zynq PS communicates with the custom NPU IP through:
+System-level connection:
 
 ```text
 ARM Cortex-A9
@@ -141,29 +199,24 @@ AXI SmartConnect
 Custom NPU IP
 ```
 
-The PS is the AXI master and the NPU is the AXI slave. Polling is used instead of interrupts.
+The PS is the AXI master and the custom NPU is the AXI slave.
 
-For the system and internal RTL organization, see:
+Polling is used instead of interrupts.
 
-[Architecture Documentation](docs/architecture.md)
+For additional details:
 
-For the command interface, see:
-
-[AXI4-Lite Command Interface](docs/AXI4-Lite_Command.md)
-
-For matrix mapping and tiling, see:
-
-[Tiling and Buffer Mapping](docs/tiling_logic.md)
+- [Architecture](docs/architecture.md)
+- [AXI4-Lite Command Interface](docs/AXI4-Lite_Command.md)
+- [Tiling and Buffer Mapping](docs/tiling_logic.md)
+- [Experimental Results](docs/Experiments.md)
 
 ---
 
-# Engine 1 - Baseline
+# Engine 1 — Baseline
 
 ## PS-Managed Inference
 
 V1 uses the PL as a tiled matrix-multiplication accelerator while the PS remains responsible for network-level execution.
-
-The startup / per-image flow is:
 
 ```text
 Startup
@@ -177,21 +230,21 @@ Per image
   -> Execute MatMul
   -> Read Product Buffer
   -> PS post-processing / requantization
-  -> repeat for the next layer
+  -> Repeat for the next layer
 ```
 
-### Baseline Data-Transfer Cost
+### V1 Communication Cost
 
-The research report counts the dominant payload transfers per image as:
+The dominant steady-state payload operations per image are:
 
 ```text
 im2col activation LOAD : 637,920
 Product Buffer READ    : 110,730
 --------------------------------
-Total                  : 748,650 handshakes / image
+Total                  : 748,650 transactions / image
 ```
 
-These counts are used as the communication baseline for V2. They represent the large payload-transfer operations and do not attempt to count every AXI protocol event such as status polling.
+This architectural payload metric excludes status polling and other small control operations.
 
 ### V1 Result
 
@@ -206,30 +259,30 @@ Estimated energy/img  : 566.199 mJ
 
 ---
 
-# Engine 2 - End-to-End PL Inference
+# Engine 2 — End-to-End PL Inference
 
-V2 keeps the same 9x16 systolic array, Weight Buffer, Activation Buffer, Product Buffer, AXI4-Lite system, and overall tiling concept, but moves CNN scheduling and intermediate operations into the PL.
+V2 keeps the same 9 x 16 systolic array, Weight Buffer, Activation Buffer, Product Buffer, AXI4-Lite system, and basic tiling concept.
 
-After per-image input and bias parameters are staged, the PL executes Conv1 through FC2 without returning intermediate feature maps to the PS.
+The main change is that network scheduling and intermediate post-processing are moved into the PL.
+
+After the original image is normalized and quantized on the PS, the PL executes Conv1 through FC2 without returning intermediate feature maps to the PS.
 
 ```text
 PS
  |
- | original input normalization / quantization
- | per-image scaled-bias preparation
- |
- +---- 522 scaled bias values
- +---- 3072 RGB activation values
+ | input normalization / quantization
+ | write image-dependent input-scale metadata
+ | upload 3072 INT8 RGB values
  |
  v
 +--------------------------------------------------+
 |                       PL                         |
 |                                                  |
-|  Conv / MatMul -> ReLU -> Requant -> Pool       |
-|       |                             |            |
-|       +------ Product Buffer <------+            |
+| Conv / MatMul -> Bias -> ReLU -> Requant        |
+|        |                         |               |
+|        +------ Product Buffer <--+               |
 |                    |                             |
-|               Next Layer                         |
+|               Next layer                        |
 |                    |                             |
 |                   ...                            |
 |                    |                             |
@@ -239,23 +292,30 @@ PS
                      +---- 10 logits -> PS
 ```
 
+---
+
 ## V2 Numerical Decisions
 
-Before committing the arithmetic to RTL, hardware-oriented numerical changes were tested in Vitis.
+Hardware-oriented arithmetic changes were checked before being committed to RTL.
 
 | Configuration | Accuracy | Decision |
 |---|---:|---|
 | V1 reference | 91.9% | baseline |
 | Original normalization + shift-based requantization | 91.5% | adopted |
-| Shift-based requantization + simplified normalization | 10.9% | rejected |
+| Simplified normalization + shift-based requantization | 10.9% | rejected |
 
 Therefore:
 
-- original CIFAR-10 normalization remains on the PS;
+- the original CIFAR-10 mean/std normalization remains on the PS;
+- the initial input tensor is globally quantized to signed INT8;
 - intermediate requantization uses shift + rounding in the PL;
-- max pooling and GAP are executed in the PL;
-- bias is injected into the accumulator path in the PL;
+- ReLU executes in the PL;
+- max pooling executes in the PL;
+- GAP executes in the PL;
+- FC1 and FC2 execute in the PL;
 - final FC2 logits are returned to the PS.
+
+---
 
 ## Shift-Based Requantization
 
@@ -265,80 +325,140 @@ The hardware-friendly operation is conceptually:
 q = round(x / 2^shift)
 ```
 
-and is implemented using a right shift plus a rounding bit, followed by saturation to the target INT8 range.
+The shift is selected from the output activation range.
 
-For the 4x4 GAP output, 16 spatial values are accumulated and division by 16 is implemented by a 4-bit right shift with rounding.
+The result is then rounded and saturated into the target INT8 domain.
 
-## Bias Handling Decision
+For GAP, 16 spatial values are accumulated and division by 16 is implemented using a 4-bit right shift plus rounding.
 
-An early approach attempted to preload INT32 bias and rescale it inside the PL as the activation scale changed. That version produced only:
+---
+
+## Verified V2 Parameter Protocol
+
+The final verified implementation separates model-static parameters from one image-dependent input-scale parameter.
+
+At startup, the host preloads:
 
 ```text
-Accuracy : 103 / 1000 = 10.3%
+Parameters   0..521 : bias_over_ws_q16
+Parameters 522..529 : inv_weight_scale_q16
 ```
 
-The accepted implementation instead prepares activation-scale-dependent bias values on the PS and loads **522 scaled Q32 bias values per image** before inference.
-
-This preserves the 91.5% V2 reference accuracy while still removing the much larger layer-by-layer activation/readback traffic of V1.
-
-## V2 Per-Image Workflow
+The 522 bias-related entries correspond to:
 
 ```text
-Startup:
-    0. Preload weights
+Conv1 :  32
+Conv2 :  32
+Conv3 :  64
+Conv4 :  64
+Conv5 :  96
+Conv6 :  96
+FC1   : 128
+FC2   :  10
+----------------
+Total : 522
+```
+
+For each image, the host writes only:
+
+```text
+Parameter 530 : inv_input_scale_q16
+```
+
+A complete 32-bit parameter is transferred through `0x0C` using two AXI4-Lite writes:
+
+```text
+LOW  = {0, ParamNumber[14:0], Value[15:0]}
+HIGH = {1, ParamNumber[14:0], Value[31:16]}
+```
+
+This is the protocol used by both the verified V2 Vitis application and the final Jupyter live-demo driver.
+
+---
+
+## V2 Startup and Per-Image Workflow
+
+```text
+Startup once:
+    0. Preload all INT8 weights
+    1. Preload parameters 0..521: bias_over_ws_q16
+    2. Preload parameters 522..529: inv_weight_scale_q16
 
 Per image:
-    1. Prepare and load scaled bias
-    2. Load preprocessed RGB activation
-    3. Execute end-to-end PL inference
-    4. Read 10 final logits
+    1. Normalize and globally quantize the RGB image
+    2. Write parameter 530: inv_input_scale_q16
+    3. Upload R, G, B INT8 channels
+       1024 + 1024 + 1024 = 3072 values
+    4. Execute Conv1 through FC2 inside the PL
+    5. Read 10 final logits
 ```
 
-The corresponding dominant payload-transfer count is:
+The steady-state per-image logical payload is:
 
 ```text
-Scaled bias :  522
-RGB input   : 3072
-Final logits:   10
--------------------
-Total       : 3604 handshakes / image
+Input-scale parameter :    1
+RGB activation values : 3072
+Final logits          :   10
+----------------------------
+Total                 : 3083 logical values / image
 ```
 
-Compared with the V1 count of 748,650, V2 uses only:
+Because parameter 530 uses LOW/HIGH half-writes, the corresponding payload-transaction count is:
 
 ```text
-3604 / 748650 = 0.004814
+Parameter-530 writes  :    2
+RGB activation writes : 3072
+Final logit reads     :   10
+----------------------------
+Total                 : 3084 transactions / image
 ```
 
-of the baseline payload-transfer count, corresponding to a reduction of approximately **99.52%**.
+Status polling is excluded from this payload metric.
+
+---
 
 ## V2 RTL Functional Partition
 
-The V2 implementation distributes post-processing instead of placing all additional functionality in one centralized combinational controller path.
+The V2 implementation distributes network-level scheduling and post-processing across several blocks.
 
-- `Ctrl`
-  - network/layer scheduling
-  - GAP and pooling control
-  - bias/requantization control
-- `sa_to_pb`
-  - ReLU
-  - local maximum / shift tracking
-- `Biggest`
-  - receives shift candidates and determines the layer-wide maximum shift requirement
-- `ctrl_to_pb`
-  - shift-based requantization
-  - max pooling
-  - bias transport toward the Product Loader
-- `Product Loader`
-  - provides the appropriate bias/partial-sum input for the systolic accumulation path
+### `Ctrl`
 
-Detailed datapath behavior is documented in [Architecture Documentation](docs/architecture.md).
+- layer sequencing;
+- convolution scheduling;
+- pooling / GAP control;
+- scale-related control;
+- address generation.
+
+### `sa_to_pb`
+
+- ReLU;
+- activation magnitude / shift-candidate tracking.
+
+### `Biggest`
+
+- layer-wide maximum shift selection.
+
+### `ctrl_to_pb`
+
+- shift-based requantization;
+- rounding;
+- saturation;
+- max-pooling processing;
+- result steering.
+
+### Product Loader / Product Buffer Feedback
+
+- K-tile partial-sum reuse;
+- intermediate-feature reuse;
+- accumulation-domain data injection.
+
+Detailed behavior is documented in:
+
+[Architecture Documentation](docs/architecture.md)
 
 ---
 
 # V1 vs. V2
-
-The V1-to-V2 comparison isolates the cost and benefit of moving network execution into the PL while keeping the basic compute array and external platform fixed.
 
 | Metric | V1 | V2 | Relative Change |
 |---|---:|---:|---:|
@@ -350,21 +470,67 @@ The V1-to-V2 comparison isolates the cost and benefit of moving network executio
 | Accuracy | 91.90% | 91.50% | -0.40%p |
 | Time / image | 338.03 ms | 5.004 ms | -98.52% |
 | Estimated energy / image | 566.199 mJ | 8.582 mJ | -98.48% |
-| Payload handshakes / image | 748,650 | 3,604 | -99.52% |
+| Steady-state payload transactions / image | 748,650 | 3,084 | -99.59% |
 
-The central observation is that V2 accepts moderate LUT/LUTRAM/FF overhead while preserving the same BRAM and DSP footprint and removing most of the PS-PL communication that dominated V1 latency.
+The central observation is that V2 accepts moderate LUT/LUTRAM/FF overhead while preserving the same BRAM and DSP footprint and removing almost all layer-by-layer PS-PL traffic.
 
-At `5.004 ms/image`, the benchmark corresponds to approximately `199.84 images/s`, or about `67.55x` the V1 end-to-end throughput.
+At `5.004 ms/image`, the controlled benchmark corresponds to approximately:
+
+```text
+199.84 images/s
+```
+
+or approximately:
+
+```text
+67.55x
+```
+
+the V1 end-to-end throughput.
 
 ---
 
-# Engine 3 - Activation Row-Level Zero-Skipping
+# V2 Live Camera Demo
 
-The next step is V3, which extends the verified V2 engine with activation row-level ZeroSkip.
+The same verified V2 accelerator was integrated into PYNQ Linux/Jupyter using the HCAM01L USB webcam.
 
-The earlier project draft described the V3 direction as column-level zero-skipping. After the V2 research review, the planned direction is now **activation row-level ZeroSkip**.
+Before live-camera use, the Jupyter path was validated against the same 1,000-image test set and reproduced:
 
-The exact skip granularity and controller protocol are not frozen yet. The intended principle is:
+```text
+Accuracy : 915 / 1000 = 91.5%
+```
+
+The final live-camera path currently runs at approximately:
+
+```text
+~5 FPS
+```
+
+This figure includes:
+
+- camera capture;
+- center crop;
+- resize;
+- BGR-to-RGB conversion;
+- input preprocessing;
+- Python/Jupyter runtime behavior;
+- host-FPGA interaction;
+- result rendering;
+- display updates.
+
+It is therefore intentionally reported separately from the `5.004 ms/image` Vitis benchmark.
+
+See:
+
+[V2 Live Camera Demo Documentation](v2/v2_live_demo/README.md)
+
+---
+
+# Engine 3 — Activation Row-Level Zero-Skipping
+
+V3 will extend the verified V2 engine with activation row-level ZeroSkip.
+
+The intended principle is:
 
 ```text
 Scheduled activation row
@@ -378,31 +544,34 @@ Scheduled activation row
   skip      execute SA work
 ```
 
-The V2 engine remains the reference for evaluating the additional cycle reduction and hardware overhead introduced by V3.
+The exact skip granularity and controller protocol will be documented from the implemented V3 RTL.
 
-The planned V2-to-V3 evaluation will include:
+The V2-to-V3 evaluation will include:
 
-- activation sparsity / zero-row frequency;
-- skipped SA work;
+- activation sparsity;
+- zero-row frequency;
+- skipped systolic-array work;
 - cycle reduction;
 - latency reduction;
-- LUT/FF overhead;
+- LUT / FF overhead;
 - timing impact;
-- power / energy impact.
+- power impact;
+- estimated energy impact;
+- classification accuracy.
 
 ---
 
 # Research Questions
 
-### RQ1 - PS-PL Execution Partition
+## RQ1 — PS-PL Execution Partition
 
 How much end-to-end inference latency can be reduced by moving CNN scheduling and intermediate processing from the PS into the PL?
 
-### RQ2 - Communication Overhead
+## RQ2 — Communication Overhead
 
-How much of the V1 latency is associated with repeated activation loading and Product Buffer readback, and how much can the communication count be reduced by V2?
+How much steady-state PS-PL payload traffic can be removed by eliminating layer-by-layer activation uploads and Product Buffer readback?
 
-### RQ3 - Activation Sparsity
+## RQ3 — Activation Sparsity
 
 How much additional execution reduction can V3 obtain by skipping work associated with all-zero activation rows?
 
@@ -424,28 +593,25 @@ V2 End-to-End PL
   125 MHz timing met
         |
         v
-V2 Vitis Live Demo
-  [NEXT]
+V2 PYNQ/Jupyter Live Camera Demo
+  [DONE]
+  USB webcam -> V2 FPGA NPU -> live prediction
+  ~5 FPS observed application/display throughput
         |
         v
 V3 Activation Row-Level ZeroSkip
   [NEXT]
 ```
 
-Immediate next steps are:
-
-1. build the V2 Vitis Live Demo and record a demonstration video;
-2. measure camera-to-result / camera-to-display behavior separately from the embedded 1,000-image benchmark;
-3. design and evaluate V3 activation row-level ZeroSkip.
-
-Project 3 is expected to move to a different inference task, such as speech recognition or object/image detection, after Project 2 is completed.
+The immediate Project 2 next step is to implement and evaluate V3 using the validated V2 engine as the reference.
 
 ---
 
-# Documentation
+# Repository Documentation
 
 - [Inference Model](docs/inference_model.md)
 - [Architecture](docs/architecture.md)
 - [Matrix Tiling and Buffer Mapping](docs/tiling_logic.md)
 - [AXI4-Lite Command Interface](docs/AXI4-Lite_Command.md)
 - [Experimental Results](docs/Experiments.md)
+- [V2 Live Camera Demo](v2/v2_live_demo/README.md)
