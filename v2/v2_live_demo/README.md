@@ -24,16 +24,7 @@ Main notebook:
 V2_Final_Live_Camera_Demo_Single.ipynb
 ```
 
-Recorded demo:
-
-```text
-Live_Demo_project2.mp4
-```
-
-Repository links:
-
-- [Jupyter Notebook](../../../v2/v2_live_demo/V2_Final_Live_Camera_Demo_Single.ipynb)
-- [Recorded Demo](../../../v2/v2_live_demo/Live_Demo_project2.mp4)
+- [Recorded Demo](https://drive.google.com/file/d/1bns6vxbrneyFb1yLkzVsFXlarAnewryC/view?usp=drive_link)
 
 ---
 
@@ -403,13 +394,3 @@ Further live-video optimization should profile the complete host/runtime/display
 | PYNQ/Jupyter validation accuracy | 91.5% | host-path cross-check |
 | Live-demo throughput | ~5 FPS | complete camera/Jupyter/display path |
 
----
-
-# 16. Related Documentation
-
-- [Project Overview](../../README.md)
-- [Inference Model](../../docs/inference_model.md)
-- [NPU Architecture](../../docs/architecture.md)
-- [AXI4-Lite Command Interface](../../docs/AXI4-Lite_Command.md)
-- [Experimental Results](../../docs/Experiments.md)
-- [V2 Vitis Application](../../../v2/vitis_application/)
