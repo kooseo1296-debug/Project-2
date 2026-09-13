@@ -4,154 +4,168 @@
 
 Model 2 is a compact VGG-style convolutional neural network used for CIFAR-10 image classification.
 
-The model takes a `32 × 32` RGB image as input and produces 10 output logits corresponding to the CIFAR-10 classes.
+Input:
 
-The network consists of:
+```text
+3 x 32 x 32 RGB image
+```
 
-- 6 convolution layers
-- ReLU activation after each convolution layer
-- 3 max-pooling layers
-- Global Average Pooling (GAP)
-- 2 fully connected layers
+Output:
+
+```text
+10 class logits
+```
+
+The model contains:
+
+- 6 convolution layers;
+- ReLU after each convolution layer;
+- 3 max-pooling layers;
+- Global Average Pooling (GAP);
+- 2 fully connected layers.
 
 All convolution layers use:
 
 ```text
-Kernel size : 3 × 3
+Kernel size : 3 x 3
 Stride      : 1
 Padding     : 1
 ```
 
-Therefore, each convolution preserves the spatial resolution of its input feature map.
-
-Spatial downsampling is performed only by the `2 × 2` max-pooling layers.
-
 ---
 
-## Model Architecture
+# 1. Model Architecture
 
-<img width="1800" height="1005" alt="image" src="https://github.com/user-attachments/assets/064491b0-99c9-4772-bc3a-e3cf267f8097" />
-
-
-The network structure is:
+<img width="1800" height="1005" alt="Model 2 architecture" src="https://github.com/user-attachments/assets/064491b0-99c9-4772-bc3a-e3cf267f8097" />
 
 ```text
 Input RGB Image
-3 × 32 × 32
-      │
-      ▼
+3 x 32 x 32
+      |
+      v
 Input Normalization
-      │
-      ▼
-Conv1: 3 → 32, 3×3
+      |
+      v
+Conv1: 3 -> 32
 ReLU
-      │
-      ▼
-32 × 32 × 32
-      │
-      ▼
-Conv2: 32 → 32, 3×3
+      |
+      v
+32 x 32 x 32
+      |
+      v
+Conv2: 32 -> 32
 ReLU
-      │
-      ▼
-MaxPool 2×2
-      │
-      ▼
-32 × 16 × 16
-      │
-      ▼
-Conv3: 32 → 64, 3×3
+      |
+      v
+MaxPool 2 x 2
+      |
+      v
+32 x 16 x 16
+      |
+      v
+Conv3: 32 -> 64
 ReLU
-      │
-      ▼
-64 × 16 × 16
-      │
-      ▼
-Conv4: 64 → 64, 3×3
+      |
+      v
+64 x 16 x 16
+      |
+      v
+Conv4: 64 -> 64
 ReLU
-      │
-      ▼
-MaxPool 2×2
-      │
-      ▼
-64 × 8 × 8
-      │
-      ▼
-Conv5: 64 → 96, 3×3
+      |
+      v
+MaxPool 2 x 2
+      |
+      v
+64 x 8 x 8
+      |
+      v
+Conv5: 64 -> 96
 ReLU
-      │
-      ▼
-96 × 8 × 8
-      │
-      ▼
-Conv6: 96 → 96, 3×3
+      |
+      v
+96 x 8 x 8
+      |
+      v
+Conv6: 96 -> 96
 ReLU
-      │
-      ▼
-MaxPool 2×2
-      │
-      ▼
-96 × 4 × 4
-      │
-      ▼
+      |
+      v
+MaxPool 2 x 2
+      |
+      v
+96 x 4 x 4
+      |
+      v
 Global Average Pooling
-      │
-      ▼
+      |
+      v
 96
-      │
-      ▼
-FC1: 96 → 128
+      |
+      v
+FC1: 96 -> 128
 ReLU
-      │
-      ▼
+      |
+      v
 128
-      │
-      ▼
-FC2: 128 → 10
-      │
-      ▼
-10-Class Logits
+      |
+      v
+FC2: 128 -> 10
+      |
+      v
+10 logits
 ```
 
 ---
 
-## Layer Specification
+# 2. Layer Specification
 
 | Layer | Input | Operation | Output |
 |---|---|---|---|
-| Input | RGB image | Normalization | `3 × 32 × 32` |
-| Conv1 | `3 × 32 × 32` | 3×3 Conv, 3→32, ReLU | `32 × 32 × 32` |
-| Conv2 | `32 × 32 × 32` | 3×3 Conv, 32→32, ReLU | `32 × 32 × 32` |
-| MaxPool1 | `32 × 32 × 32` | 2×2, stride 2 | `32 × 16 × 16` |
-| Conv3 | `32 × 16 × 16` | 3×3 Conv, 32→64, ReLU | `64 × 16 × 16` |
-| Conv4 | `64 × 16 × 16` | 3×3 Conv, 64→64, ReLU | `64 × 16 × 16` |
-| MaxPool2 | `64 × 16 × 16` | 2×2, stride 2 | `64 × 8 × 8` |
-| Conv5 | `64 × 8 × 8` | 3×3 Conv, 64→96, ReLU | `96 × 8 × 8` |
-| Conv6 | `96 × 8 × 8` | 3×3 Conv, 96→96, ReLU | `96 × 8 × 8` |
-| MaxPool3 | `96 × 8 × 8` | 2×2, stride 2 | `96 × 4 × 4` |
-| GAP | `96 × 4 × 4` | Global Average Pooling | `96` |
-| FC1 | `96` | Fully Connected, ReLU | `128` |
-| FC2 | `128` | Fully Connected | `10` |
+| Input | RGB | normalization | `3 x 32 x 32` |
+| Conv1 | `3 x 32 x 32` | 3x3, 3->32, ReLU | `32 x 32 x 32` |
+| Conv2 | `32 x 32 x 32` | 3x3, 32->32, ReLU | `32 x 32 x 32` |
+| MaxPool1 | `32 x 32 x 32` | 2x2 / stride 2 | `32 x 16 x 16` |
+| Conv3 | `32 x 16 x 16` | 3x3, 32->64, ReLU | `64 x 16 x 16` |
+| Conv4 | `64 x 16 x 16` | 3x3, 64->64, ReLU | `64 x 16 x 16` |
+| MaxPool2 | `64 x 16 x 16` | 2x2 / stride 2 | `64 x 8 x 8` |
+| Conv5 | `64 x 8 x 8` | 3x3, 64->96, ReLU | `96 x 8 x 8` |
+| Conv6 | `96 x 8 x 8` | 3x3, 96->96, ReLU | `96 x 8 x 8` |
+| MaxPool3 | `96 x 8 x 8` | 2x2 / stride 2 | `96 x 4 x 4` |
+| GAP | `96 x 4 x 4` | average 16 values/channel | `96` |
+| FC1 | `96` | fully connected + ReLU | `128` |
+| FC2 | `128` | fully connected | `10` |
 
 ---
 
-# Numerical Operations
-
-## 1. Input Preprocessing
-
-The original CIFAR-10 input consists of unsigned 8-bit RGB pixels:
+# 3. CIFAR-10 Classes
 
 ```text
-R, G, B ∈ [0, 255]
+0 : airplane
+1 : automobile
+2 : bird
+3 : cat
+4 : deer
+5 : dog
+6 : frog
+7 : horse
+8 : ship
+9 : truck
 ```
 
-The input is first converted to floating point and scaled to `[0, 1]`:
+---
+
+# 4. Input Preprocessing
+
+The input image consists of unsigned 8-bit RGB pixels.
+
+First:
 
 ```text
 x = pixel / 255
 ```
 
-Channel-wise normalization is then applied:
+Then channel-wise normalization:
 
 ```text
 x_norm = (x - mean) / std
@@ -164,692 +178,329 @@ mean = (0.4914, 0.4822, 0.4465)
 std  = (0.2470, 0.2435, 0.2616)
 ```
 
-Therefore, the raw `0–255` RGB values are not directly used as Conv1 operands.
-
-Before Conv1, the normalized activation is quantized to signed INT8.
+Therefore the raw `0..255` pixel values are not directly used as Conv1 operands.
 
 ---
 
-## 2. Convolution
+# 5. V2 Initial INT8 Quantization
 
-For an output channel `o` at spatial position `(h, w)`, a convolution computes:
+After mean/std normalization, the verified V2 host path uses one signed-symmetric scale over the complete normalized RGB tensor.
+
+```text
+3 x 32 x 32 = 3072 values
+```
+
+The host computes:
+
+```text
+max_abs = max(abs(x_norm))
+input_scale = max_abs / 127
+```
+
+with a safe fallback if `max_abs == 0`.
+
+Quantization uses round-to-even behavior:
+
+```text
+q_input = round_to_even(x_norm / input_scale)
+q_input = clip(q_input, -128, 127)
+```
+
+The PL receives the values in channel-first order:
+
+```text
+R[0..1023]
+G[0..1023]
+B[0..1023]
+```
+
+---
+
+# 6. Image-Dependent Input Scale Metadata
+
+The host computes:
+
+```text
+inv_input_scale_q16
+    ~= round((1 / input_scale) * 2^16)
+```
+
+This value is written as:
+
+```text
+Parameter 530
+```
+
+before the image is uploaded.
+
+Parameter 530 is the only image-dependent parameter in the final verified host interface.
+
+---
+
+# 7. Convolution
+
+For output channel `o` and spatial position `(h, w)`:
 
 ```text
 y[o,h,w]
     =
-    Σ x[c,h+i,w+j] × W[o,c,i,j]
-    + b[o]
+    sum x[c,h+i,w+j] * W[o,c,i,j]
+    + bias[o]
 ```
 
-where the summation is performed over:
+For a 3 x 3 convolution:
 
 ```text
-c = input channels
-i = 0, 1, 2
-j = 0, 1, 2
+K = Cin x 3 x 3
+  = 9 x Cin
 ```
 
-because all convolution kernels are `3 × 3`.
-
-The number of multiply-accumulate terms for one output element is therefore:
+Examples:
 
 ```text
-K = Cin × 3 × 3
-  = 9 × Cin
+Conv1 : K = 27
+Conv2 : K = 288
+Conv3 : K = 288
+Conv4 : K = 576
+Conv5 : K = 576
+Conv6 : K = 864
 ```
 
-For example:
-
-```text
-Conv1: K = 3  × 9 = 27
-Conv2: K = 32 × 9 = 288
-Conv4: K = 64 × 9 = 576
-Conv6: K = 96 × 9 = 864
-```
+The accelerator processes the K dimension in 9-element physical tiles.
 
 ---
 
-## 3. INT8 Convolution
+# 8. Quantized Weighted-Layer Datapath
 
-The reference inference model uses quantized activations and quantized weights for the convolution operation.
-
-For an activation tensor `x`, an activation scale `s_x` is first determined and the activation is quantized:
+Weighted operations use:
 
 ```text
-x_q = floor(x / s_x)
+INT8 activation
+      x
+INT8 weight
+      |
+      v
+wide signed accumulation
 ```
 
-followed by clipping to the signed INT8 range:
+The physical MAC engine is the 9 x 16 weight-stationary systolic array.
 
-```text
-x_q ∈ [-128, 127]
-```
-
-Each convolution layer also has an INT8 weight tensor `w_q` and a corresponding weight scale `s_w`.
-
-The integer convolution computes:
-
-```text
-p = Σ x_q × w_q
-```
-
-where `p` is a wide integer accumulation result.
-
-The corresponding floating-point convolution result is reconstructed as:
-
-```text
-y = p × s_x × s_w + bias
-```
-
-Thus, the integer MAC result and its numerical interpretation are related by:
-
-```text
-Integer MAC
-    p = Σ x_q × w_q
-
-Real-domain result
-    y = p × (s_x × s_w) + b
-```
+The accumulator result is combined with the required V2 bias/scale metadata and passed through layer-specific post-processing.
 
 ---
 
-## 4. ReLU
-
-ReLU is applied after every convolution layer and after FC1.
-
-The operation is:
+# 9. ReLU
 
 ```text
 ReLU(x) = max(0, x)
 ```
 
-Therefore:
-
-```text
-x < 0  →  0
-x ≥ 0  →  x
-```
-
-ReLU removes negative activations and introduces non-linearity into the network.
+ReLU is applied after every convolution layer and after FC1.
 
 ---
 
-## 5. Max Pooling
+# 10. Max Pooling
 
-Each max-pooling layer uses:
-
-```text
-Kernel size : 2 × 2
-Stride      : 2
-```
-
-For each channel, the maximum value in every `2 × 2` region is selected:
+Each pooling layer uses:
 
 ```text
-y[c,h,w]
-    =
-    max(
-        x[c,2h,  2w],
-        x[c,2h+1,2w],
-        x[c,2h,  2w+1],
-        x[c,2h+1,2w+1]
-    )
+Kernel : 2 x 2
+Stride : 2
 ```
 
-Max pooling reduces the spatial dimensions by a factor of two:
+For one channel:
 
 ```text
-32 × 32 → 16 × 16
-16 × 16 →  8 × 8
- 8 ×  8 →  4 × 4
+y[h,w] = max(
+    x[2h,   2w],
+    x[2h+1, 2w],
+    x[2h,   2w+1],
+    x[2h+1, 2w+1]
+)
 ```
 
-while preserving the number of channels.
+Spatial dimensions:
+
+```text
+32 x 32 -> 16 x 16
+16 x 16 ->  8 x 8
+ 8 x  8 ->  4 x 4
+```
+
+V2 executes max pooling inside the PL.
 
 ---
 
-## 6. Global Average Pooling
+# 11. Global Average Pooling
 
-After Conv6 and the final max-pooling layer, the feature-map shape is:
-
-```text
-96 × 4 × 4
-```
-
-Global Average Pooling computes one value for each channel by averaging all 16 spatial values:
+After Conv6 and MaxPool3:
 
 ```text
-GAP[c]
-    =
-    (1 / 16)
-    × Σ x[c,h,w]
+96 x 4 x 4
 ```
 
-where:
+Each channel contains 16 spatial values.
 
 ```text
-h = 0 ... 3
-w = 0 ... 3
+GAP[c] = sum16 / 16
 ```
 
-The resulting tensor is therefore reduced from:
-
-```text
-96 × 4 × 4
-```
-
-to:
-
-```text
-96
-```
-
-and is used as the input to FC1.
+Since `16 = 2^4`, V2 implements the division with a 4-bit right shift plus rounding.
 
 ---
 
-## 7. Fully Connected Layers
+# 12. Fully Connected Layers
 
-FC1 performs:
-
-```text
-y = Wx + b
-```
-
-with:
+FC1:
 
 ```text
-Input  : 96
-Output : 128
+96 -> 128
+ReLU
 ```
 
-followed by ReLU.
-
-FC2 performs:
+FC2:
 
 ```text
-Input  : 128
-Output : 10
+128 -> 10
 ```
-
-and produces the final CIFAR-10 logits.
 
 The predicted class is:
 
 ```text
-prediction = argmax(logit)
+prediction = argmax(logit[0..9])
 ```
 
 ---
 
-# Activation Requantization
+# 13. Requantization
 
-## Why Requantization Is Required
+INT8 x INT8 weighted operations produce a wider accumulation result, so intermediate outputs must be converted back to an INT8 activation representation before the next weighted layer.
 
-The output of a quantized convolution is not directly an INT8 activation.
-
-The convolution performs:
-
-```text
-INT8 activation
-      ×
-INT8 weight
-      ↓
-Wide integer accumulation
-```
-
-and therefore produces a value with a much larger numerical range than `[-128, 127]`.
-
-Before that activation is used by the next convolution or fully connected layer, it must be converted back into an INT8 representation.
-
-This operation is referred to as **requantization**.
-
-Requantization is different from the initial RGB preprocessing:
-
-```text
-Initial preprocessing:
-raw RGB → normalized model input
-
-Requantization:
-intermediate layer output → INT8 input for next weighted layer
-```
-
----
-
-## Reference Requantization Method
-
-In the current inference reference, the quantization scale of an activation tensor is determined from its maximum absolute value.
-
-For an activation tensor `x`:
-
-```text
-max_abs = max(|x|)
-```
-
-and the INT8 scale is:
-
-```text
-s_x = 2 × max_abs / 255
-```
-
-The activation is then quantized as:
-
-```text
-x_q = floor(x / s_x)
-```
-
-and clipped to:
-
-```text
-[-128, 127]
-```
-
-After ReLU, all values are non-negative, so the effective quantized range becomes:
-
-```text
-[0, 127]
-```
-
-For example, if the maximum ReLU activation is `Amax`, the scale becomes:
-
-```text
-scale = 2 × Amax / 255
-```
-
-and the largest activation is mapped approximately to:
-
-```text
-Amax / scale
-≈ 127.5
-```
-
-which is clipped to:
-
-```text
-127
-```
-
-This allows the available INT8 range to be adapted to the activation range of each intermediate tensor.
-
----
-
-## Position of Requantization
-
-Requantization occurs before an activation is consumed by the next weighted layer.
-
-The effective sequence of the model is:
-
-```text
-Input
- ↓
-Normalize
- ↓
-Quantize
- ↓
-Conv1
- ↓
-ReLU
- ↓
-Requantize
- ↓
-Conv2
-```
-
-For a block containing max pooling:
-
-```text
-Conv2
- ↓
-ReLU
- ↓
-MaxPool
- ↓
-Requantize
- ↓
-Conv3
-```
-
-Likewise:
-
-```text
-Conv4
- ↓
-ReLU
- ↓
-MaxPool
- ↓
-Requantize
- ↓
-Conv5
-```
-
-The final convolution block is:
-
-```text
-Conv6
- ↓
-ReLU
- ↓
-MaxPool
- ↓
-GAP
- ↓
-Requantize
- ↓
-FC1
-```
-
-and the final hidden fully connected layer is:
-
-```text
-FC1
- ↓
-ReLU
- ↓
-Requantize
- ↓
-FC2
-```
-
-FC2 is the final weighted layer and therefore does not require another activation requantization.
-
----
-
-## Summary of Numerical Flow
-
-The inference model can be summarized as:
-
-```text
-Raw RGB Image
-      ↓
-Normalize
-      ↓
-INT8 Quantization
-      ↓
-
-┌─────────────────────────────┐
-│ INT8 Weighted Layer         │
-│ Conv or FC                  │
-│                             │
-│ INT8 × INT8                 │
-│      ↓                      │
-│ Wide Accumulation           │
-│      ↓                      │
-│ Scale Restoration + Bias    │
-│      ↓                      │
-│ ReLU / Pool / GAP           │
-│      ↓                      │
-│ Requantization to INT8      │
-└─────────────────────────────┘
-      ↓
-Next Weighted Layer
-      ↓
-...
-      ↓
-10 Output Logits
-```
-
-The model therefore maintains low-precision operands for its weighted operations while using a wider numerical representation for intermediate accumulation.
-
-
----
-
-# V2 Hardware-Oriented Numerical Mapping
-
-The model definition above is unchanged for V2. The V2 architecture changes
-**where** the operations are executed and replaces selected scaling operations
-with hardware-friendly integer operations.
-
-The final V2 HW/SW split is:
-
-| Operation | V2 Location |
-|---|---|
-| RGB input acquisition | PS |
-| CIFAR-10 mean/std normalization | PS |
-| Initial INT8 input quantization | PS |
-| Convolution / matrix multiplication | PL |
-| Bias addition | PL |
-| ReLU | PL |
-| Shift-based requantization | PL |
-| 2 × 2 maxpool | PL |
-| GAP | PL |
-| FC1 / FC2 | PL |
-| Final logits | PL → PS |
-
-The simplified normalization experiment was rejected because its accuracy fell
-to 10.9%. V2 therefore preserves the original trained-model normalization on
-the PS.
-
----
-
-## V2 Input Quantization
-
-After the original channel-wise normalization, the current V2 host flow uses
-one signed-symmetric scale over the complete normalized RGB tensor.
-
-```text
-Normalized input tensor : 3 × 32 × 32 = 3072 values
-
-max_abs = max(abs(x_norm))
-input_scale = max_abs / 127
-q_input = round_to_even(x_norm / input_scale)
-q_input = clip(q_input, -128, 127)
-```
-
-Thus, the PL receives 3072 signed INT8 values rather than raw unsigned RGB
-pixels.
-
-The corresponding activation-scale metadata is also retained by the V2
-numerical flow because it is required for correct bias-domain conversion.
-
----
-
-## V2 Weighted-Layer Arithmetic
-
-For every convolution or fully connected layer, the integer datapath can be
-viewed as:
-
-```text
-INT8 activation
-      ×
-INT8 weight
-      ↓
-Wide integer accumulation
-      ↓
-Activation-scale-dependent bias addition
-      ↓
-ReLU, if enabled
-      ↓
-Pooling / GAP, if enabled
-      ↓
-Layer-wide shift-based requantization
-      ↓
-INT8 activation for the next weighted layer
-```
-
-The physical MAC datapath remains based on the 9 × 16 weight-stationary
-systolic array. V2 adds the post-processing and scale/bias handling required to
-keep the intermediate activation inside the PL.
-
----
-
-## Layer-Wide Shift-Based Requantization
-
-The original reference uses an arbitrary activation scale derived from the
-activation range. V2 approximates the next activation scale with a power of two
-so that the conversion can be implemented using a right shift and rounding.
-
-The conceptual operation is:
+V2 replaces arbitrary intermediate scaling with a power-of-two approximation:
 
 ```text
 q = round(x / 2^n)
 ```
 
-where `n` is the requantization shift selected from the maximum activation
-magnitude of the current layer output.
-
-For non-negative ReLU output, the hardware-friendly rounding operation is
-conceptually:
+Hardware implementation:
 
 ```text
-shifted = x >> n
-
-if n > 0 and bit[n-1] == 1:
-    shifted = shifted + 1
-
-q = saturate_to_INT8(shifted)
+right shift
++ rounding
++ INT8 saturation
 ```
 
-The maximum is accumulated across the complete layer output, including all
-output-channel tiles. Therefore, V2 uses **one requantization shift per layer
-output tensor**, not an independent shift for each output channel.
+V2 uses one layer/tensor-wide shift rather than an independent shift for each output channel.
 
-The shift-based scheme produced:
+Accuracy comparison:
 
 ```text
-915 / 1000 = 91.5%
+Reference arithmetic : 91.9%
+V2 shift-based path  : 91.5%
 ```
 
-compared with 91.9% for the original reference arithmetic, so it was accepted
-for V2.
+The 0.4 percentage-point reduction was accepted.
 
 ---
 
-## V2 Max Pooling
+# 14. Model-Static Bias Parameters
 
-The mathematical max-pooling operation is unchanged:
+The verified V2 host interface stores bias-related metadata as:
 
 ```text
-maxpool(a, b, c, d) = max(a, b, c, d)
+Parameters 0..521 : bias_over_ws_q16
 ```
 
-V2 performs the reduction while the intermediate feature remains inside the PL.
-The controller/post-processing path consumes the four values belonging to one
-2 × 2 pooling window and produces one valid pooled output.
-
-This reduces the spatial dimensions as before:
+Ordering:
 
 ```text
-32 × 32 -> 16 × 16
-16 × 16 ->  8 × 8
- 8 ×  8 ->  4 × 4
+Conv1 :   0..31
+Conv2 :  32..63
+Conv3 :  64..127
+Conv4 : 128..191
+Conv5 : 192..287
+Conv6 : 288..383
+FC1   : 384..511
+FC2   : 512..521
+```
+
+These 522 values are model-static and are loaded once during startup.
+
+---
+
+# 15. Model-Static Weight-Scale Parameters
+
+```text
+Parameters 522..529 : inv_weight_scale_q16
+```
+
+Mapping:
+
+```text
+522 : Conv1
+523 : Conv2
+524 : Conv3
+525 : Conv4
+526 : Conv5
+527 : Conv6
+528 : FC1
+529 : FC2
+```
+
+These parameters are also loaded once during model preload.
+
+---
+
+# 16. Per-Image Parameter
+
+For each input image:
+
+```text
+Parameter 530 : inv_input_scale_q16
+```
+
+is recomputed from the current normalized image's global INT8 input scale.
+
+Final parameter lifetime:
+
+```text
+Startup once:
+    0..521   bias_over_ws_q16
+    522..529 inv_weight_scale_q16
+
+Per image:
+    530      inv_input_scale_q16
 ```
 
 ---
 
-## V2 Global Average Pooling
+# 17. Final V2 HW/SW Partition
 
-After the final max-pooling stage, each channel contains a 4 × 4 feature map.
-Therefore, the mathematically correct GAP operation reduces **16 values per
-channel**:
-
-```text
-sum16 = x0 + x1 + ... + x15
-GAP   = round(sum16 / 16)
-```
-
-Since `16 = 2^4`, the V2 hardware-friendly implementation can use a four-bit
-right shift with rounding:
-
-```text
-gap = (sum16 >> 4) + rounding_bit
-```
-
-where the rounding decision is derived from the highest discarded bit (`bit 3`)
-of the positive summed value.
-
-GAP itself does not introduce a new learned scale. The resulting activation is
-then requantized for FC1 using the same layer-scale tracking policy.
+| Operation | V2 Location |
+|---|---|
+| image acquisition | PS |
+| crop / resize in live demo | PS |
+| BGR -> RGB in live demo | PS |
+| mean/std normalization | PS |
+| initial global INT8 quantization | PS |
+| Conv1..Conv6 | PL |
+| bias / scale-domain handling | PL using preloaded metadata |
+| ReLU | PL |
+| shift-based requantization | PL |
+| max pooling | PL |
+| GAP | PL |
+| FC1 / FC2 | PL |
+| 10 final logits | PL -> PS |
+| argmax / display | PS |
 
 ---
 
-## V2 Bias Representation
-
-Bias must be represented in the integer accumulator domain. Conceptually:
-
-```text
-bias_acc = round(bias_real / (activation_scale * weight_scale))
-```
-
-The weight scale is fixed for a trained layer, but the activation scale is
-dynamic. Therefore, simply preloading one fixed integer bias and attempting to
-reuse it for every input does not reproduce the reference arithmetic.
-
-Two approaches were evaluated:
-
-| Bias method | Accuracy | Decision |
-|---|---:|---|
-| Initial INT32 bias preload + runtime rescaling | 10.3% | Reject |
-| PS prepares activation-scale-dependent Q32 bias per image | 91.5% | Accept |
-
-The accepted V2 flow therefore sends the scaled bias parameters needed by the
-eight weighted layers. The total number of bias values is:
-
-```text
-Conv1 :  32
-Conv2 :  32
-Conv3 :  64
-Conv4 :  64
-Conv5 :  96
-Conv6 :  96
-FC1   : 128
-FC2   :  10
-----------------
-Total : 522
-```
-
-These 522 values explain the additional per-image parameter traffic in the
-final V2 workflow.
-
----
-
-# Layer Tensor Footprints
-
-For communication and buffering analysis, each tensor can also be represented
-by its flattened element count.
-
-| Layer | Input Elements | Output Elements |
-|---|---:|---:|
-| Input normalization | — | 3,072 |
-| Conv1 | 3,072 | 32,768 |
-| Conv2 | 32,768 | 32,768 |
-| MaxPool1 | 32,768 | 8,192 |
-| Conv3 | 8,192 | 16,384 |
-| Conv4 | 16,384 | 16,384 |
-| MaxPool2 | 16,384 | 4,096 |
-| Conv5 | 4,096 | 6,144 |
-| Conv6 | 6,144 | 6,144 |
-| MaxPool3 | 6,144 | 1,536 |
-| GAP | 1,536 | 96 |
-| FC1 | 96 | 128 |
-| FC2 | 128 | 10 |
-
-Summing the numerical inputs of Conv1 through FC2 gives:
-
-```text
-Total weighted / intermediate layer input elements = 127,712
-```
-
-and summing all outputs shown in the table, including the normalized input
-tensor, gives:
-
-```text
-Total listed output elements = 127,722
-```
-
-These totals are descriptive model-footprint values. They should not be confused
-with the actual AXI transaction count because the V1 im2col representation
-replicates activation values and therefore causes substantially more PS→PL data
-movement than the raw tensor sizes alone imply.
-
----
-
-# V2 End-to-End Numerical Flow
+# 18. V2 End-to-End Numerical Flow
 
 ```mermaid
 flowchart TD
     RGB[32 x 32 RGB] --> PSN[PS: mean/std normalization]
-    PSN --> PSQ[PS: signed INT8 quantization]
+    PSN --> PSQ[PS: global signed INT8 quantization]
     PSQ --> C1[PL: Conv1 + Bias + ReLU]
     C1 --> R1[Shift Requant]
     R1 --> C2[Conv2 + Bias + ReLU]
@@ -868,5 +519,24 @@ flowchart TD
     F2 --> LOG[10 logits]
 ```
 
-This is the numerical model used by the V2 end-to-end PL engine after the PS
-has completed the original input preprocessing.
+---
+
+# 19. Tensor Footprints
+
+| Layer | Input Elements | Output Elements |
+|---|---:|---:|
+| Input normalization | — | 3,072 |
+| Conv1 | 3,072 | 32,768 |
+| Conv2 | 32,768 | 32,768 |
+| MaxPool1 | 32,768 | 8,192 |
+| Conv3 | 8,192 | 16,384 |
+| Conv4 | 16,384 | 16,384 |
+| MaxPool2 | 16,384 | 4,096 |
+| Conv5 | 4,096 | 6,144 |
+| Conv6 | 6,144 | 6,144 |
+| MaxPool3 | 6,144 | 1,536 |
+| GAP | 1,536 | 96 |
+| FC1 | 96 | 128 |
+| FC2 | 128 | 10 |
+
+These are mathematical tensor sizes, not AXI transaction counts. V1 `im2col` replicates activation values and therefore causes substantially more PS-to-PL traffic than the raw tensor sizes alone imply.
