@@ -356,7 +356,7 @@ PROJECT 2 COMPLETE
 
 - [Inference Model](docs/inference_model.md)
 - [Architecture](docs/architecture.md)
-- [Matrix Tiling and Buffer Mapping](../docs/tiling_logic.md)
+- [Matrix Tiling and Buffer Mapping](docs/tiling_logic.md)
 - [AXI4-Lite Command Interface](docs/AXI4-Lite_Command.md)
 - [Experimental Results](docs/Experiments.md)
 - [V2 Live Camera Demo](v2/v2_live_demo/README.md)
